@@ -15,10 +15,11 @@ macro bind(def, element)
 end
 
 # ╔═╡ 44bd8931-450e-4019-8dd0-30a5b25d6078
-using Plots, CSV, DataFrames, Unitful, Measurements, PlutoUI
-
-# ╔═╡ dae903a1-6f30-478f-a55c-02a0dd2b6532
-TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
+begin
+	using Plots, CSV, DataFrames, Unitful, Measurements, PlutoUI
+	TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
+	@info "Modules loaded."
+end
 
 # ╔═╡ 4392a6f5-e8dd-4fe6-b765-d21e14c32461
 md"
@@ -154,7 +155,7 @@ Returns the conductor diameter d_w and insulation thickness t given AWG. Returns
 ### Examples
 ```julia-repl
 julia> d_w, d_total, t = get_diameters_from_awg(32)
-(0.203 mm, 0.231 mm, 0.028 mm)
+(0.203±0.003 mm, 0.231 mm, 0.028±0.003 mm)
 
 julia> d_w, d_total, t = get_diameters_from_awg(22)
 (nothing, nothing, nothing)
@@ -167,7 +168,7 @@ function get_diameters_from_awg(awg)
 		@warn "Not a valid gauge."
 		return nothing, nothing
 	end
-	d_w = awg_df.:"conductor diameter"[index][1]u"mm"
+	d_w = awg_df.:"conductor diameter"[index][1]u"mm" ± awg_df.:"conductor error"[index][1]u"mm"
 	d_total = awg_df.:"total diameter"[index][1]u"mm"
 	t = d_total-d_w
 	return d_w, d_total, t 
@@ -212,7 +213,7 @@ Number of toroids: $(@bind num_toroids Slider(1:8, default=4, show_value=true))
 #### Wire Properties
 Wire type = $(@bind wire_type Select(["Cu" => "Copper", "Al" => "Aluminum", "HTCCA" => "HTCCA"]))
 
-Wire AWG: $(@bind gauge Slider(28:56, default=30, show_value=true)) 
+Wire AWG: $(@bind gauge Slider(24:56, default=30, show_value=true)) 
 
 #### Preamp Properties
 Number of jfets: $(@bind num_caps Slider(1:4, default=2, show_value=true))
@@ -255,7 +256,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.0-beta4"
 manifest_format = "2.0"
-project_hash = "266d2d0039c00b4ecf674273a867fbec65ce3967"
+project_hash = "5713e3ad77209f96f28e5c92cc8317835a54b15a"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -1366,21 +1367,20 @@ version = "1.4.1+0"
 """
 
 # ╔═╡ Cell order:
-# ╠═44bd8931-450e-4019-8dd0-30a5b25d6078
-# ╠═dae903a1-6f30-478f-a55c-02a0dd2b6532
-# ╠═4392a6f5-e8dd-4fe6-b765-d21e14c32461
-# ╟─06f26860-d843-497f-9ae5-25594ddaddef
+# ╟─44bd8931-450e-4019-8dd0-30a5b25d6078
+# ╟─4392a6f5-e8dd-4fe6-b765-d21e14c32461
+# ╠═06f26860-d843-497f-9ae5-25594ddaddef
 # ╟─a47c7173-317d-4394-8357-59743f5a0982
 # ╟─1322f57c-93ff-4c5d-9980-30fd01d5a4d3
-# ╟─f86e3141-2161-4dec-ab51-15612e30bc70
+# ╠═f86e3141-2161-4dec-ab51-15612e30bc70
 # ╟─b09a2088-a56a-4479-82ec-995e5cdf27f4
 # ╟─a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
 # ╟─4bd00596-c1cb-4e36-81a2-687e1b19ec0e
 # ╟─27677f2b-f65c-437d-bbff-fac1e2af6e17
-# ╠═1de014e3-b354-45a4-b17d-87de58a8ad74
-# ╠═fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
-# ╠═fabef5a0-e215-472c-a383-6a328045b129
-# ╠═95b1daf8-80ed-41d4-ac99-4dd90038d4fa
-# ╠═285d9346-305b-4345-9f46-402240e7e06b
+# ╟─1de014e3-b354-45a4-b17d-87de58a8ad74
+# ╟─fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
+# ╟─fabef5a0-e215-472c-a383-6a328045b129
+# ╟─95b1daf8-80ed-41d4-ac99-4dd90038d4fa
+# ╟─285d9346-305b-4345-9f46-402240e7e06b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
