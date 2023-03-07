@@ -4,21 +4,34 @@
 using Markdown
 using InteractiveUtils
 
+# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
+macro bind(def, element)
+    quote
+        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
+        local el = $(esc(element))
+        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
+        el
+    end
+end
+
 # ╔═╡ 44bd8931-450e-4019-8dd0-30a5b25d6078
-using Plots, CSV, DataFrames
+using Plots, CSV, DataFrames, Unitful, Measurements, PlutoUI
+
+# ╔═╡ dae903a1-6f30-478f-a55c-02a0dd2b6532
+TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
 
 # ╔═╡ 4392a6f5-e8dd-4fe6-b765-d21e14c32461
 md"
-# HFLoop Optimization
+## Introduction and Equations
 This code is based off of Cavoit et al., 2006.
-## Transfer Function
+### Transfer Function
 In order to properly model the high freuqency loop, there are a few key components to simulate:
  1. the primary loop ($M$)
  2. the toroids ($H_m$)
  3. the preamplifier ($H_a$)
  4. the feedback loop resistance ($Y_{cr}$)
 
-### Equations
+#### Transfer Function Equations
 
 The general equation looks like this:
 
@@ -56,20 +69,37 @@ The amplifier transfer function $H_a$ is...
 
 And finally, $Y_{cr}$ is just inverse of feedback resistance $1/R_{cr}$, which is about 1.2kΩ.
 
-In the frequency range of interest $\omega \sim 10e6$, $HY_{cr}>>1$, so we can simplify:
+In the frequency range of interest $F_0 \sim 10e6$, $HY_{cr}>>1$, so we can simplify:
 
-$\frac{V_s}{B_0} = \frac{M}{Y_{cr}} = \frac{j\omega S R_{cr}}{r_b + j\omega(L_0 + Al)} \approx \frac{S R_{cr}}{L_0}$
+$\frac{V_s}{B_0} = \frac{M}{Y_{cr}} = \frac{j\omega S R_{cr}}{r_b + j\omega(L_0 + A_l)} \approx \frac{S R_{cr}}{L_0}$
 
 meaning that the efficiency of our loop is primarily dependent on surface area of primary loop, feedback resistance, and self inductance of the toroids.
+
+#### Noise Equations
 
 "
 
 # ╔═╡ 06f26860-d843-497f-9ae5-25594ddaddef
 begin
+	const S = 209.5u"mm^2"; #mm^2, from Bennett 3/6/23
+	const r_loop = 194u"mm"; #mm, from Bennett 3/6/23
+	const A_loop = pi*r_loop^2
+	const t_loop = 4u"mm"; #mm, thickness of aluminum loop
+	@info "Imported loop properties."
+	
+	# const A_l = 348e-9 ± 0.25*348e-9 # nH, from 4A11 in 
+	toroid_list = Dict([
+		("TN13/7.5/5-4A11", [13u"mm" ± 0.35u"mm", 6.8u"mm" ± 0.35u"mm", 5.4u"mm" ± 0.35u"mm", 358u"nH" ± 0.25*358u"nH"]),
+		("TN10/6/4-4A11", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 348u"nH" ± 0.25*348u"nH"])
+	]);
+	# https://www.farnell.com/datasheets/650988.pdf
+	# https://www.distrelec.biz/Web/Downloads/_t/ds/tn10_eng_tds.pdf
+	@info "Imported toroid properties."
+
 	wire_list = Dict([ # in format material => electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator)
-		("Cu", [17.1, 8930, 1200, 3]),
-		("Al", [27.9, 2700, 1200, 3]),
-		("HTCCA", [27.8, 3630, 1200, 3])
+		("Cu", [17.1u"nΩ * m", 8930u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
+		("Al", [27.9u"nΩ * m", 2700u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
+		("HTCCA", [27.8u"nΩ * m", 3630u"kg/m^3", 1200u"kg/m^3", 3u"F/m"])
 	]); # this is in nΩ * m for resisitvity, and kg/m^3 for density
 	# Note: insulation density of 1200 kg/m^3 is valid for P155, PN155, P180, and E180
 	# https://www.elektrisola.com/conductor-materials/aluminum-copper-clad-aluminum/aluminum.html
@@ -80,21 +110,37 @@ begin
 	end
 	@info "Imported wire properties."
 
-	const A_l = 348e-9 # nH, from 4A11 in https://www.distrelec.biz/Web/Downloads/_t/ds/tn10_eng_tds.pdf
-	@info "Imported toroid properties."
-
-	const C_jfet = 20e-12 #pF, from https://www.mouser.com/datasheet/2/676/jfet_if1320_interfet-2888025.pdf
+	const C_jfet = 20u"pF" #pF, from https://www.mouser.com/datasheet/2/676/jfet_if1320_interfet-2888025.pdf
 	@info "Imported jfet properties."
 end	
+
+# ╔═╡ a47c7173-317d-4394-8357-59743f5a0982
+md"
+## Basic Functions
+"
+
+# ╔═╡ 1322f57c-93ff-4c5d-9980-30fd01d5a4d3
+"""
+Returns the toroid dimensions and specific inductance.
+
+### Examples
+```julia-repl
+julia> OD_tor, ID_tor, H_tor, A_l = get_toroid_properties("TN10/6/4-4A11")
+[10.6±0.3 mm, 5.2±0.3 mm, 4.4±0.3 mm, 348.0±87.0 nH]
+```
+"""
+function get_toroid_properties(toroid_type::String)
+	return get(toroid_list, toroid_type, ~)
+end
 
 # ╔═╡ f86e3141-2161-4dec-ab51-15612e30bc70
 """
 Returns the electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator).
 
-# Examples
+### Examples
 ```julia-repl
 julia> wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
-(17.1, 8930.0, 1200.0, 3.0)
+[17.1 m nΩ, 8930.0 kg m⁻³, 1200.0 kg m⁻³, 3.0 F m⁻¹]
 ```
 """
 function get_wire_properties(wire_type::String)
@@ -105,13 +151,13 @@ end
 """
 Returns the conductor diameter d_w and insulation thickness t given AWG. Returns nothing if invalid gauge.
 
-# Examples
+### Examples
 ```julia-repl
-julia> d_w, t = get_diameters_from_awg(32)
-(0.203, 0.028)
+julia> d_w, d_total, t = get_diameters_from_awg(32)
+(0.203 mm, 0.231 mm, 0.028 mm)
 
-julia> d_w, t = get_diameters_from_awg(22)
-(nothing, nothing)
+julia> d_w, d_total, t = get_diameters_from_awg(22)
+(nothing, nothing, nothing)
 Warning: Not a valid gauge.
 ```
 """
@@ -121,17 +167,17 @@ function get_diameters_from_awg(awg)
 		@warn "Not a valid gauge."
 		return nothing, nothing
 	end
-	d_w = awg_df.:"conductor diameter"[index][1]
-	d_total = awg_df.:"total diameter"[index][1]
+	d_w = awg_df.:"conductor diameter"[index][1]u"mm"
+	d_total = awg_df.:"total diameter"[index][1]u"mm"
 	t = d_total-d_w
-	return d_w, t
+	return d_w, d_total, t 
 end
 
 # ╔═╡ a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
 """
 Returns the number of turns required based on desired frequency range, toroid, and jfet properties. No reliance on noise and self inductance at all.
 
-# Examples
+### Examples
 ```julia-repl
 julia> N = turns_from_freq(100e3, 10e6, 4, A_l, C_jfet, 2)
 N = 42.658002367554225
@@ -142,20 +188,65 @@ function turns_from_freq(F_lo, F_hi, N_toroids, A_l, C_jfet, N_jfet)
 	return (2 * pi * F0 * sqrt(N_toroids * A_l * C_jfet / N_jfet))^-1
 end
 
+# ╔═╡ 4bd00596-c1cb-4e36-81a2-687e1b19ec0e
+"""
+Calculates maximum turns that can fit in a toroid with given ID and given AWG.
+"""
+function max_turns_per_toroid(ID, d_total)
+	return pi * ID / d_total
+end
+
+# ╔═╡ 27677f2b-f65c-437d-bbff-fac1e2af6e17
+md"
+### Obtain parameters
+"
+
+# ╔═╡ 285d9346-305b-4345-9f46-402240e7e06b
+md"""
+### Define Properties
+#### Toroid Properties
+Toroid type = $(@bind toroid_type Select(["TN10/6/4-4A11", "TN13/7.5/5-4A11"]))
+
+Number of toroids: $(@bind num_toroids Slider(1:8, default=4, show_value=true))
+
+#### Wire Properties
+Wire type = $(@bind wire_type Select(["Cu" => "Copper", "Al" => "Aluminum", "HTCCA" => "HTCCA"]))
+
+Wire AWG: $(@bind gauge Slider(28:56, default=30, show_value=true)) 
+
+#### Preamp Properties
+Number of jfets: $(@bind num_caps Slider(1:4, default=2, show_value=true))
+"""
+
+# ╔═╡ 1de014e3-b354-45a4-b17d-87de58a8ad74
+d_w, d_total, t = get_diameters_from_awg(gauge)
+
+# ╔═╡ fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
+OD_tor, ID_tor, H_tor, A_l = get_toroid_properties(toroid_type)
+
+# ╔═╡ fabef5a0-e215-472c-a383-6a328045b129
+N_max = max_turns_per_toroid(ID_tor, d_total)
+
 # ╔═╡ 95b1daf8-80ed-41d4-ac99-4dd90038d4fa
-N = turns_from_freq(100e3, 10e6, 4, A_l, C_jfet, 2)
+N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_caps))
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Measurements = "eff96d63-e80a-5855-80a2-b1b0885c5ab7"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
 CSV = "~0.10.9"
 DataFrames = "~1.5.0"
-Plots = "~1.38.5"
+Measurements = "~2.8.0"
+Plots = "~1.38.6"
+PlutoUI = "~0.7.50"
+Unitful = "~1.12.4"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -164,7 +255,13 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.0-beta4"
 manifest_format = "2.0"
-project_hash = "d75f718fd92673dfa9f9c7e5bf6ec39a7fc7f277"
+project_hash = "266d2d0039c00b4ecf674273a867fbec65ce3967"
+
+[[deps.AbstractPlutoDingetjes]]
+deps = ["Pkg"]
+git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
+uuid = "6e696c72-6542-2067-7265-42206c756150"
+version = "1.1.4"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -199,11 +296,11 @@ git-tree-sha1 = "4b859a208b2397a7a623a03449e4636bdb17bcf2"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
 version = "1.16.1+1"
 
-[[deps.ChainRulesCore]]
-deps = ["Compat", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "c6d890a52d2c4d55d326439580c3b8d0875a77d9"
-uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-version = "1.15.7"
+[[deps.Calculus]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "f641eb0a4f00c343bbc32346e1217b86f3ce9dad"
+uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
+version = "0.5.1"
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
@@ -236,15 +333,33 @@ uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.10"
 
 [[deps.Compat]]
-deps = ["Dates", "LinearAlgebra", "UUIDs"]
-git-tree-sha1 = "61fdd77467a5c3ad071ef8277ac6bd6af7dd4c04"
+deps = ["UUIDs"]
+git-tree-sha1 = "7a60c856b9fa189eb34f5f8a6f6b5529b7942957"
 uuid = "34da2185-b29b-5c13-b0c7-acf172513d20"
-version = "4.6.0"
+version = "4.6.1"
+weakdeps = ["Dates", "LinearAlgebra"]
+
+    [deps.Compat.extensions]
+    CompatLinearAlgebraExt = "LinearAlgebra"
 
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "1.0.2+0"
+
+[[deps.ConstructionBase]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "89a9db8d28102b094992472d333674bd1a83ce2a"
+uuid = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
+version = "1.5.1"
+
+    [deps.ConstructionBase.extensions]
+    IntervalSetsExt = "IntervalSets"
+    StaticArraysExt = "StaticArrays"
+
+    [deps.ConstructionBase.weakdeps]
+    IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [[deps.Contour]]
 git-tree-sha1 = "d05d9e7b7aedff4e5b51a029dced05cfb6125781"
@@ -413,6 +528,24 @@ git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
 
+[[deps.Hyperscript]]
+deps = ["Test"]
+git-tree-sha1 = "8d511d5b81240fc8e6802386302675bdf47737b9"
+uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
+version = "0.0.4"
+
+[[deps.HypertextLiteral]]
+deps = ["Tricks"]
+git-tree-sha1 = "c47c5fa4c5308f27ccaac35504858d8914e102f9"
+uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+version = "0.9.4"
+
+[[deps.IOCapture]]
+deps = ["Logging", "Random"]
+git-tree-sha1 = "f7be53659ab06ddc986428d3a9dcc95f6fa6705a"
+uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
+version = "0.2.2"
+
 [[deps.IniFile]]
 git-tree-sha1 = "f550e6e32074c939295eb5ea6de31849ac2c9625"
 uuid = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
@@ -434,9 +567,9 @@ uuid = "41ab1584-1d38-5bbf-9106-f11c6c58b48f"
 version = "1.2.0"
 
 [[deps.IrrationalConstants]]
-git-tree-sha1 = "7fd44fd4ff43fc60815f8e764c0f352b83c49151"
+git-tree-sha1 = "630b497eafcc20001bba38a4651b327dcfc491d2"
 uuid = "92d709cd-6900-40b7-9082-c6be49f344b6"
-version = "0.1.1"
+version = "0.2.2"
 
 [[deps.IteratorInterfaceExtensions]]
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
@@ -572,9 +705,9 @@ uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [[deps.LogExpFunctions]]
 deps = ["DocStringExtensions", "IrrationalConstants", "LinearAlgebra"]
-git-tree-sha1 = "071602a0be5af779066df0d7ef4e14945a010818"
+git-tree-sha1 = "0a1b7c2863e44523180fdb3146534e265a91870b"
 uuid = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
-version = "0.3.22"
+version = "0.3.23"
 
     [deps.LogExpFunctions.extensions]
     LogExpFunctionsChainRulesCoreExt = "ChainRulesCore"
@@ -594,6 +727,11 @@ deps = ["Dates", "Logging"]
 git-tree-sha1 = "cedb76b37bc5a6c702ade66be44f831fa23c681e"
 uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 version = "1.0.0"
+
+[[deps.MIMEs]]
+git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
+uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
+version = "0.1.4"
 
 [[deps.MacroTools]]
 deps = ["Markdown", "Random"]
@@ -615,6 +753,12 @@ version = "1.1.7"
 deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
 version = "2.28.0+0"
+
+[[deps.Measurements]]
+deps = ["Calculus", "LinearAlgebra", "Printf", "RecipesBase", "Requires"]
+git-tree-sha1 = "12950d646ce04fb2e89ba5bd890205882c3592d7"
+uuid = "eff96d63-e80a-5855-80a2-b1b0885c5ab7"
+version = "2.8.0"
 
 [[deps.Measures]]
 git-tree-sha1 = "c13304c81eec1ed3af7fc20e75fb6b26092a1102"
@@ -696,9 +840,9 @@ version = "10.42.0+0"
 
 [[deps.Parsers]]
 deps = ["Dates", "SnoopPrecompile"]
-git-tree-sha1 = "6f4fbcd1ad45905a5dee3f4256fabb49aa2110c6"
+git-tree-sha1 = "478ac6c952fddd4399e71d4779797c538d0ff2bf"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-version = "2.5.7"
+version = "2.5.8"
 
 [[deps.Pipe]]
 git-tree-sha1 = "6842804e7867b115ca9de748a0cf6b364523c16d"
@@ -730,9 +874,29 @@ version = "1.3.4"
 
 [[deps.Plots]]
 deps = ["Base64", "Contour", "Dates", "Downloads", "FFMPEG", "FixedPointNumbers", "GR", "JLFzf", "JSON", "LaTeXStrings", "Latexify", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "Preferences", "Printf", "REPL", "Random", "RecipesBase", "RecipesPipeline", "Reexport", "RelocatableFolders", "Requires", "Scratch", "Showoff", "SnoopPrecompile", "SparseArrays", "Statistics", "StatsBase", "UUIDs", "UnicodeFun", "Unzip"]
-git-tree-sha1 = "8ac949bd0ebc46a44afb1fdca1094554a84b086e"
+git-tree-sha1 = "da1d3fb7183e38603fcdd2061c47979d91202c97"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "1.38.5"
+version = "1.38.6"
+
+    [deps.Plots.extensions]
+    FileIOExt = "FileIO"
+    GeometryBasicsExt = "GeometryBasics"
+    IJuliaExt = "IJulia"
+    ImageInTerminalExt = "ImageInTerminal"
+    UnitfulExt = "Unitful"
+
+    [deps.Plots.weakdeps]
+    FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
+    GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
+    IJulia = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
+    ImageInTerminal = "d8c32880-2388-543b-8c61-d9f865259254"
+    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+
+[[deps.PlutoUI]]
+deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
+git-tree-sha1 = "5bb5129fdd62a2bbbe17c2756932259acf467386"
+uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+version = "0.7.50"
 
 [[deps.PooledArrays]]
 deps = ["DataAPI", "Future"]
@@ -811,9 +975,9 @@ version = "1.1.1"
 
 [[deps.SentinelArrays]]
 deps = ["Dates", "Random"]
-git-tree-sha1 = "c02bd3c9c3fc8463d3591a62a378f90d2d8ab0f3"
+git-tree-sha1 = "77d3c4726515dca71f6d80fbb5e251088defe305"
 uuid = "91c51154-3ec4-41a3-a24f-3f23e20d615c"
-version = "1.3.17"
+version = "1.3.18"
 
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
@@ -849,10 +1013,16 @@ deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
 uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [[deps.SpecialFunctions]]
-deps = ["ChainRulesCore", "IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
-git-tree-sha1 = "d75bda01f8c31ebb72df80a46c88b25d1c79c56d"
+deps = ["IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
+git-tree-sha1 = "ef28127915f4229c971eb43f3fc075dd3fe91880"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
-version = "2.1.7"
+version = "2.2.0"
+
+    [deps.SpecialFunctions.extensions]
+    SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
+
+    [deps.SpecialFunctions.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 
 [[deps.Statistics]]
 deps = ["LinearAlgebra", "SparseArrays"]
@@ -919,6 +1089,11 @@ git-tree-sha1 = "94f38103c984f89cf77c402f2a68dbd870f8165f"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 version = "0.9.11"
 
+[[deps.Tricks]]
+git-tree-sha1 = "6bac775f2d42a611cdfcd1fb217ee719630c4175"
+uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
+version = "0.1.6"
+
 [[deps.URIs]]
 git-tree-sha1 = "074f993b0ca030848b897beff716d93aca60f06a"
 uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
@@ -936,6 +1111,12 @@ deps = ["REPL"]
 git-tree-sha1 = "53915e50200959667e78a92a418594b428dffddf"
 uuid = "1cfade01-22cf-5700-b092-accc4b62d6e1"
 version = "0.4.1"
+
+[[deps.Unitful]]
+deps = ["ConstructionBase", "Dates", "LinearAlgebra", "Random"]
+git-tree-sha1 = "bb37ed24f338bc59b83e3fc9f32dd388e5396c53"
+uuid = "1986cc42-f94f-5a68-af5c-568840ba703d"
+version = "1.12.4"
 
 [[deps.Unzip]]
 git-tree-sha1 = "ca0969166a028236229f63514992fc073799bb78"
@@ -1186,11 +1367,20 @@ version = "1.4.1+0"
 
 # ╔═╡ Cell order:
 # ╠═44bd8931-450e-4019-8dd0-30a5b25d6078
-# ╟─4392a6f5-e8dd-4fe6-b765-d21e14c32461
+# ╠═dae903a1-6f30-478f-a55c-02a0dd2b6532
+# ╠═4392a6f5-e8dd-4fe6-b765-d21e14c32461
 # ╟─06f26860-d843-497f-9ae5-25594ddaddef
+# ╟─a47c7173-317d-4394-8357-59743f5a0982
+# ╟─1322f57c-93ff-4c5d-9980-30fd01d5a4d3
 # ╟─f86e3141-2161-4dec-ab51-15612e30bc70
 # ╟─b09a2088-a56a-4479-82ec-995e5cdf27f4
 # ╟─a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
+# ╟─4bd00596-c1cb-4e36-81a2-687e1b19ec0e
+# ╟─27677f2b-f65c-437d-bbff-fac1e2af6e17
+# ╠═1de014e3-b354-45a4-b17d-87de58a8ad74
+# ╠═fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
+# ╠═fabef5a0-e215-472c-a383-6a328045b129
 # ╠═95b1daf8-80ed-41d4-ac99-4dd90038d4fa
+# ╠═285d9346-305b-4345-9f46-402240e7e06b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
