@@ -15,11 +15,10 @@ macro bind(def, element)
 end
 
 # ╔═╡ 44bd8931-450e-4019-8dd0-30a5b25d6078
-begin
-	using Plots, CSV, DataFrames, Unitful, Measurements, PlutoUI
-	TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
-	@info "Modules loaded."
-end
+using Plots, CSV, DataFrames, Unitful, Measurements, PlutoUI
+
+# ╔═╡ e6c4f7f0-e159-4231-9801-76a0ec643673
+TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
 
 # ╔═╡ 4392a6f5-e8dd-4fe6-b765-d21e14c32461
 md"
@@ -80,99 +79,15 @@ meaning that the efficiency of our loop is primarily dependent on surface area o
 
 "
 
-# ╔═╡ 06f26860-d843-497f-9ae5-25594ddaddef
-begin
-	const S = 209.5u"mm^2"; #mm^2, from Bennett 3/6/23
-	const r_loop = 194u"mm"; #mm, from Bennett 3/6/23
-	const A_loop = pi*r_loop^2
-	const t_loop = 4u"mm"; #mm, thickness of aluminum loop
-	@info "Imported loop properties."
-	
-	# const A_l = 348e-9 ± 0.25*348e-9 # nH, from 4A11 in 
-	toroid_list = Dict([
-		("TN13/7.5/5-4A11", [13u"mm" ± 0.35u"mm", 6.8u"mm" ± 0.35u"mm", 5.4u"mm" ± 0.35u"mm", 358u"nH" ± 0.25*358u"nH"]),
-		("TN10/6/4-4A11", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 348u"nH" ± 0.25*348u"nH"])
-	]);
-	# https://www.farnell.com/datasheets/650988.pdf
-	# https://www.distrelec.biz/Web/Downloads/_t/ds/tn10_eng_tds.pdf
-	@info "Imported toroid properties."
-
-	wire_list = Dict([ # in format material => electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator)
-		("Cu", [17.1u"nΩ * m", 8930u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
-		("Al", [27.9u"nΩ * m", 2700u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
-		("HTCCA", [27.8u"nΩ * m", 3630u"kg/m^3", 1200u"kg/m^3", 3u"F/m"])
-	]); # this is in nΩ * m for resisitvity, and kg/m^3 for density
-	# Note: insulation density of 1200 kg/m^3 is valid for P155, PN155, P180, and E180
-	# https://www.elektrisola.com/conductor-materials/aluminum-copper-clad-aluminum/aluminum.html
-	awg_df = try
-	CSV.File("awg.csv"; header=true, delim=',', types=Float64) |> DataFrame;
-	catch
-		@warn "No awg.csv file."
-	end
-	@info "Imported wire properties."
-
-	const C_jfet = 20u"pF" #pF, from https://www.mouser.com/datasheet/2/676/jfet_if1320_interfet-2888025.pdf
-	@info "Imported jfet properties."
-end	
+# ╔═╡ 3660811b-8146-4111-819d-794cec160072
+md"
+## Import Parameters
+"
 
 # ╔═╡ a47c7173-317d-4394-8357-59743f5a0982
 md"
 ## Basic Functions
 "
-
-# ╔═╡ 1322f57c-93ff-4c5d-9980-30fd01d5a4d3
-"""
-Returns the toroid dimensions and specific inductance.
-
-### Examples
-```julia-repl
-julia> OD_tor, ID_tor, H_tor, A_l = get_toroid_properties("TN10/6/4-4A11")
-[10.6±0.3 mm, 5.2±0.3 mm, 4.4±0.3 mm, 348.0±87.0 nH]
-```
-"""
-function get_toroid_properties(toroid_type::String)
-	return get(toroid_list, toroid_type, ~)
-end
-
-# ╔═╡ f86e3141-2161-4dec-ab51-15612e30bc70
-"""
-Returns the electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator).
-
-### Examples
-```julia-repl
-julia> wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
-[17.1 m nΩ, 8930.0 kg m⁻³, 1200.0 kg m⁻³, 3.0 F m⁻¹]
-```
-"""
-function get_wire_properties(wire_type::String)
-	return get(wire_list, wire_type, ~)
-end
-
-# ╔═╡ b09a2088-a56a-4479-82ec-995e5cdf27f4
-"""
-Returns the conductor diameter d_w and insulation thickness t given AWG. Returns nothing if invalid gauge.
-
-### Examples
-```julia-repl
-julia> d_w, d_total, t = get_diameters_from_awg(32)
-(0.203±0.003 mm, 0.231 mm, 0.028±0.003 mm)
-
-julia> d_w, d_total, t = get_diameters_from_awg(22)
-(nothing, nothing, nothing)
-Warning: Not a valid gauge.
-```
-"""
-function get_diameters_from_awg(awg)
-	index = findfirst(x->x==awg, awg_df.awg)
-	if isnothing(index)
-		@warn "Not a valid gauge."
-		return nothing, nothing
-	end
-	d_w = awg_df.:"conductor diameter"[index][1]u"mm" ± awg_df.:"conductor error"[index][1]u"mm"
-	d_total = awg_df.:"total diameter"[index][1]u"mm"
-	t = d_total-d_w
-	return d_w, d_total, t 
-end
 
 # ╔═╡ a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
 """
@@ -208,28 +123,180 @@ md"""
 #### Toroid Properties
 Toroid type = $(@bind toroid_type Select(["TN10/6/4-4A11", "TN13/7.5/5-4A11"]))
 
-Number of toroids: $(@bind num_toroids Slider(1:8, default=4, show_value=true))
+Number of toroids: $(@bind num_toroids Slider(1:8, default=4, show_value=true)) toroids
 
 #### Wire Properties
 Wire type = $(@bind wire_type Select(["Cu" => "Copper", "Al" => "Aluminum", "HTCCA" => "HTCCA"]))
 
-Wire AWG: $(@bind gauge Slider(24:56, default=30, show_value=true)) 
+Wire AWG: $(@bind gauge Slider(24:56, default=30, show_value=true)) AWG
 
-#### Preamp Properties
-Number of jfets: $(@bind num_caps Slider(1:4, default=2, show_value=true))
+#### Amplifier Properties
+Number of jfets: $(@bind num_caps Slider(1:4, default=2, show_value=true)) jfets
+
+JFET Input Capacitance: $(@bind C_jfet_unitless NumberField(1:1000; default=20)) pF
+
+JFET Input Voltage Noise: $(@bind e_ba_unitless NumberField(0:10; default=1)) nT/sqrt(Hz)
+
+#### Feedback Properties
+Feedback Resisitance R\_cr: $(@bind R_cr_unitless NumberField(.1:.001:10; default=1.2)) kΩ
+
+#### Define turns for model
+Number of Turns: $(@bind N_turns NumberField(1:1000; default=50)) turns
+
+Margin: $(@bind margin Slider(1:0.01:2; default=1.15, show_value=true))x
+
+
+
 """
+
+# ╔═╡ 06f26860-d843-497f-9ae5-25594ddaddef
+begin
+	const k = 1.38e-23u"m^2*kg/(s^2*K)" # boltzmann constant
+	const T = 300u"K" # K, operating temperature
+	
+	const S = 209.5u"mm^2"; #mm^2, from Bennett 3/6/23
+	const r_loop = 194u"mm"; #mm, from Bennett 3/6/23
+	const A_loop = pi*r_loop^2 #area enclosed by loop
+	const t_loop = 4u"mm"; #mm, thickness of aluminum loop
+	@info "Imported loop properties."
+	
+	# const A_l = 348e-9 ± 0.25*348e-9 # nH, from 4A11 in 
+	toroid_list = Dict([
+		("TN13/7.5/5-4A11", [13u"mm" ± 0.35u"mm", 6.8u"mm" ± 0.35u"mm", 5.4u"mm" ± 0.35u"mm", 0.1u"mm", 358u"nH" ± 0.25*358u"nH", 700u"H/m" ± 0.2*700u"H/m"]),
+		("TN10/6/4-4A11", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 0.1u"mm", 348u"nH" ± 0.25*348u"nH", 700u"H/m" ± 0.2*700u"H/m"])
+	]);
+	# https://www.farnell.com/datasheets/650988.pdf
+	# https://www.distrelec.biz/Web/Downloads/_t/ds/tn10_eng_tds.pdf
+	@info "Imported toroid properties."
+
+	wire_list = Dict([ # in format material => electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator)
+		("Cu", [17.1u"nΩ * m", 8930u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
+		("Al", [27.9u"nΩ * m", 2700u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
+		("HTCCA", [27.8u"nΩ * m", 3630u"kg/m^3", 1200u"kg/m^3", 3u"F/m"])
+	]); # this is in nΩ * m for resisitvity, and kg/m^3 for density
+	# Note: insulation density of 1200 kg/m^3 is valid for P155, PN155, P180, and E180
+	# https://www.elektrisola.com/conductor-materials/aluminum-copper-clad-aluminum/aluminum.html
+	awg_df = try
+	CSV.File("awg.csv"; header=true, delim=',', types=Float64) |> DataFrame;
+	catch
+		@warn "No awg.csv file."
+	end
+	@info "Imported wire properties."
+
+	const C_jfet = C_jfet_unitless * 1u"pF" #pF, from https://www.mouser.com/datasheet/2/676/jfet_if1320_interfet-2888025.pdf
+	const e_ba = e_ba_unitless * 1u"nV * sqrt(Hz)"
+	@info "Imported jfet properties."
+
+	const R_cr = R_cr_unitless * 1u"kΩ"
+	@info "Imported circuit properties."
+end	
+
+# ╔═╡ 1322f57c-93ff-4c5d-9980-30fd01d5a4d3
+"""
+Returns the toroid dimensions and specific inductance.
+
+### Examples
+```julia-repl
+julia> OD_tor, ID_tor, H_tor, chamfer, A_l, μ_i = get_toroid_properties("TN10/6/4-4A11")
+[10.6±0.3 mm, 5.2±0.3 mm, 0.1±0.0 mm, 4.4±0.3 mm, 348.0±87.0 nH, 700.0±140.0 H m⁻¹]
+```
+"""
+function get_toroid_properties(toroid_type::String)
+	return get(toroid_list, toroid_type, ~)
+end
+
+# ╔═╡ f86e3141-2161-4dec-ab51-15612e30bc70
+"""
+Returns the electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator).
+
+### Examples
+```julia-repl
+julia> wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
+[17.1 m nΩ, 8930.0 kg m⁻³, 1200.0 kg m⁻³, 3.0 F m⁻¹]
+```
+"""
+function get_wire_properties(wire_type::String)
+	return get(wire_list, wire_type, ~)
+end
+
+# ╔═╡ ff172ea6-e2bc-4eab-a379-72bed691ebda
+wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
+
+# ╔═╡ b09a2088-a56a-4479-82ec-995e5cdf27f4
+"""
+Returns the conductor diameter d_w and insulation thickness t given AWG. Returns nothing if invalid gauge.
+
+### Examples
+```julia-repl
+julia> d_w, d_total, t = get_diameters_from_awg(32)
+(0.203±0.003 mm, 0.231 mm, 0.028±0.003 mm)
+
+julia> d_w, d_total, t = get_diameters_from_awg(22)
+(nothing, nothing, nothing)
+Warning: Not a valid gauge.
+```
+"""
+function get_diameters_from_awg(awg)
+	index = findfirst(x->x==awg, awg_df.awg)
+	if isnothing(index)
+		@warn "Not a valid gauge."
+		return nothing, nothing
+	end
+	d_w = awg_df.:"conductor diameter"[index][1]u"mm" ± awg_df.:"conductor error"[index][1]u"mm"
+	d_total = awg_df.:"total diameter"[index][1]u"mm"
+	t = d_total-d_w
+	return d_w, d_total, t 
+end
 
 # ╔═╡ 1de014e3-b354-45a4-b17d-87de58a8ad74
 d_w, d_total, t = get_diameters_from_awg(gauge)
 
 # ╔═╡ fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
-OD_tor, ID_tor, H_tor, A_l = get_toroid_properties(toroid_type)
+OD_tor, ID_tor, H_tor, chamfer, A_l, μ_i = get_toroid_properties(toroid_type)
 
 # ╔═╡ fabef5a0-e215-472c-a383-6a328045b129
 N_max = max_turns_per_toroid(ID_tor, d_total)
 
 # ╔═╡ 95b1daf8-80ed-41d4-ac99-4dd90038d4fa
 N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_caps))
+
+# ╔═╡ a17830f1-6c78-46c4-81d5-b26867b1ad31
+begin
+	l_t = margin*2*((OD_tor - ID_tor - 2*chamfer) + (H_tor - 2*chamfer) + pi*chamfer) # m, turn length
+	L_tw = num_toroids*N_turns*l_t |> u"m"# m, total wire length
+	@info "$N_turns turns will use $L_tw of $gauge AWG wire w/ $(round(100*(margin-1)))% margin."
+	S_w = π * (d_w/2)^2 |> u"mm^2" # mm^2, Wire cross sectional area
+	ρ = wire_ρr / S_w |> u"Ω/m" # Ω/m, wire resistivity
+	r_s = (L_tw * ρ) |> u"Ω" # total resistance from windings (Ω = kg m^2/s^3 A^2)
+	@info "Total winding resisitance: $r_s"
+
+	e_bt = sqrt(4*k*T*r_s) |> u"nV/sqrt(Hz)" # wound toroid johnson nyquist noise in units of nV/sqrt(Hz)
+	@info "Johnson-nyquist noise of wound toroid e_bt: $e_bt"
+end
+
+# ╔═╡ b4ed3094-ba79-4e3e-ab69-96fa6462d07c
+A(f) = upreferred(2*pi*f*A_l*N_turns^2)
+
+# ╔═╡ bdc581b9-365d-4d08-860f-98654d16483c
+A(1u"MHz") |> u"Ω" #<-- this is a problem. I think the units of this should be 1/Ω
+
+# ╔═╡ c2691c78-c918-432a-a28c-2c7d840558ed
+v_b1(f) = e_bt / ( 1 + (A(f)/R_in) - (2*pi*f)^2*C_in*A_l*N^2 )
+
+# ╔═╡ 44d0685c-cf1c-4227-89a2-80a1efc389af
+v_b2(f) = e_bR / ( 1 + (R_in/A(f)) )
+
+# ╔═╡ 6beab4d1-453a-4aee-bbd1-4cc524f9eedb
+v_b3(f) = i_bA / ((1/R_in) + 1/A(f))
+
+# ╔═╡ e1dba096-8eb8-4757-9590-c97d53bd2d5a
+v_b4(f) = e_ba
+
+# ╔═╡ 8676533e-169d-4395-867b-297d3fd2768f
+v_b(f) = sqrt(v_b1(f)^2 + v_b2(f)^2 + v_b3(f)^2 + v_b4(f)^2)
+
+# ╔═╡ 0aea937d-b6cc-4094-b862-8d7e6dfa5d2f
+
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1367,20 +1434,32 @@ version = "1.4.1+0"
 """
 
 # ╔═╡ Cell order:
-# ╟─44bd8931-450e-4019-8dd0-30a5b25d6078
+# ╠═44bd8931-450e-4019-8dd0-30a5b25d6078
+# ╠═e6c4f7f0-e159-4231-9801-76a0ec643673
 # ╟─4392a6f5-e8dd-4fe6-b765-d21e14c32461
+# ╟─3660811b-8146-4111-819d-794cec160072
 # ╠═06f26860-d843-497f-9ae5-25594ddaddef
 # ╟─a47c7173-317d-4394-8357-59743f5a0982
 # ╟─1322f57c-93ff-4c5d-9980-30fd01d5a4d3
-# ╠═f86e3141-2161-4dec-ab51-15612e30bc70
+# ╟─f86e3141-2161-4dec-ab51-15612e30bc70
 # ╟─b09a2088-a56a-4479-82ec-995e5cdf27f4
 # ╟─a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
 # ╟─4bd00596-c1cb-4e36-81a2-687e1b19ec0e
 # ╟─27677f2b-f65c-437d-bbff-fac1e2af6e17
 # ╟─1de014e3-b354-45a4-b17d-87de58a8ad74
 # ╟─fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
+# ╟─ff172ea6-e2bc-4eab-a379-72bed691ebda
 # ╟─fabef5a0-e215-472c-a383-6a328045b129
-# ╟─95b1daf8-80ed-41d4-ac99-4dd90038d4fa
+# ╠═95b1daf8-80ed-41d4-ac99-4dd90038d4fa
 # ╟─285d9346-305b-4345-9f46-402240e7e06b
+# ╟─a17830f1-6c78-46c4-81d5-b26867b1ad31
+# ╠═bdc581b9-365d-4d08-860f-98654d16483c
+# ╠═b4ed3094-ba79-4e3e-ab69-96fa6462d07c
+# ╠═c2691c78-c918-432a-a28c-2c7d840558ed
+# ╠═44d0685c-cf1c-4227-89a2-80a1efc389af
+# ╠═6beab4d1-453a-4aee-bbd1-4cc524f9eedb
+# ╠═e1dba096-8eb8-4757-9590-c97d53bd2d5a
+# ╠═8676533e-169d-4395-867b-297d3fd2768f
+# ╠═0aea937d-b6cc-4094-b862-8d7e6dfa5d2f
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
