@@ -2,7 +2,7 @@
 
 # Packages to install
 ```
-add Pluto, Markdown, InteractiveUtils, Plots, CSV, DataFrames, Unitful, Measurements
+add Pluto, PlutoUI, Markdown, InteractiveUtils, Plots, CSV, DataFrames, Unitful, Measurements
 ```
 
 # Citations
