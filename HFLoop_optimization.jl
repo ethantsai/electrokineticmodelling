@@ -75,8 +75,6 @@ $\frac{V_s}{B_0} = \frac{M}{Y_{cr}} = \frac{j\omega S R_{cr}}{r_b + j\omega(L_0 
 
 meaning that the efficiency of our loop is primarily dependent on surface area of primary loop, feedback resistance, and self inductance of the toroids.
 
-#### Noise Equations
-
 "
 
 # ╔═╡ 3660811b-8146-4111-819d-794cec160072
@@ -102,6 +100,20 @@ N = 42.658002367554225
 function turns_from_freq(F_lo, F_hi, N_toroids, A_l, C_jfet, N_jfet)
 	F0 = sqrt(F_lo*F_hi)
 	return (2 * pi * F0 * sqrt(N_toroids * A_l * C_jfet / N_jfet))^-1
+end
+
+# ╔═╡ 328d3bbc-3aa1-4e68-a3f9-997c9222f78e
+"""
+Returns the resonant frequency based on specific inductance, given turns, and total C_in.
+
+### Examples
+```julia-repl
+julia> f_r = get_resonant_frequency(A_l, N_turns, C_jfet/num_caps)
+f_r = 67.4 ± 8.4 MHz
+```
+"""
+function get_resonant_frequency(A_l, N_turns, C_in)
+	return (2*pi*sqrt(A_l * N_turns^2 * C_in)^-1) |> u"MHz"
 end
 
 # ╔═╡ 4bd00596-c1cb-4e36-81a2-687e1b19ec0e
@@ -270,15 +282,49 @@ begin
 	r_s = (L_tw * ρ) |> u"Ω" # total resistance from windings (Ω = kg m^2/s^3 A^2)
 	@info "Total winding resisitance: $r_s"
 
+	@info "Resonant frequency will be centered at $(get_resonant_frequency(A_l, N_turns, C_jfet/num_caps))."
+	
 	e_bt = sqrt(4*k*T*r_s) |> u"nV/sqrt(Hz)" # wound toroid johnson nyquist noise in units of nV/sqrt(Hz)
 	@info "Johnson-nyquist noise of wound toroid e_bt: $e_bt"
 end
+
+# ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
+md"
+#### Noise Equations
+
+Voltage noise from toroids:
+
+$v_{b1} = \frac{e_{bt}}
+{ 1 + \frac{A}{R_{in}} - (2 \pi f)^2 C_{in} A_l N_{turns}^2 }$
+
+where:
+
+$A = 2 \pi f A_l N_{turns}^2$
+
+Voltage noise from biasing circuit:
+
+$v_{b2} = \frac{e_{bR}}
+{ 1 + \frac{R_{in}}{A}}$
+
+Amplfier current noise:
+
+$v_{b3} = \frac{i_{bA}}
+{ \frac{1}{R_{in}} + \frac{1}{A}}$
+
+Amplfier voltage noise:
+
+$v_{b4} = e_{ba}$
+
+"
 
 # ╔═╡ b4ed3094-ba79-4e3e-ab69-96fa6462d07c
 A(f) = upreferred(2*pi*f*A_l*N_turns^2)
 
 # ╔═╡ bdc581b9-365d-4d08-860f-98654d16483c
 A(1u"MHz") |> u"Ω" #<-- this is a problem. I think the units of this should be 1/Ω
+
+# ╔═╡ 891eedc7-07c9-4d71-9d6b-7868e56b70b1
+
 
 # ╔═╡ c2691c78-c918-432a-a28c-2c7d840558ed
 v_b1(f) = e_bt / ( 1 + (A(f)/R_in) - (2*pi*f)^2*C_in*A_l*N^2 )
@@ -1443,7 +1489,8 @@ version = "1.4.1+0"
 # ╟─1322f57c-93ff-4c5d-9980-30fd01d5a4d3
 # ╟─f86e3141-2161-4dec-ab51-15612e30bc70
 # ╟─b09a2088-a56a-4479-82ec-995e5cdf27f4
-# ╟─a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
+# ╠═a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
+# ╟─328d3bbc-3aa1-4e68-a3f9-997c9222f78e
 # ╟─4bd00596-c1cb-4e36-81a2-687e1b19ec0e
 # ╟─27677f2b-f65c-437d-bbff-fac1e2af6e17
 # ╟─1de014e3-b354-45a4-b17d-87de58a8ad74
@@ -1454,7 +1501,9 @@ version = "1.4.1+0"
 # ╟─285d9346-305b-4345-9f46-402240e7e06b
 # ╟─a17830f1-6c78-46c4-81d5-b26867b1ad31
 # ╠═bdc581b9-365d-4d08-860f-98654d16483c
+# ╟─c702b936-d809-4235-9d11-29e619d31d37
 # ╠═b4ed3094-ba79-4e3e-ab69-96fa6462d07c
+# ╠═891eedc7-07c9-4d71-9d6b-7868e56b70b1
 # ╠═c2691c78-c918-432a-a28c-2c7d840558ed
 # ╠═44d0685c-cf1c-4227-89a2-80a1efc389af
 # ╠═6beab4d1-453a-4aee-bbd1-4cc524f9eedb
