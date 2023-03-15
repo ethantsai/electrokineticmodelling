@@ -177,7 +177,7 @@ begin
 	# Note: insulation density of 1200 kg/m^3 is valid for P155, PN155, P180, and E180
 	# https://www.elektrisola.com/conductor-materials/aluminum-copper-clad-aluminum/aluminum.html
 	awg_df = try
-	CSV.File("awg.csv"; header=true, delim=',', types=Float64) |> DataFrame;
+	CSV.File("lookup/awg.csv"; header=true, delim=',', types=Float64) |> DataFrame;
 	catch
 		@warn "No awg.csv file."
 	end
