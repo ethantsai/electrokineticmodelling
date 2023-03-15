@@ -1,9 +1,14 @@
 # Electrokinetic modelling for SCM and HFLoop
 
-# Packages to install
-```
-add Pluto, PlutoUI, Markdown, InteractiveUtils, Plots, CSV, DataFrames, Unitful, Measurements
-```
+# Virtual environment
+  1. Enter package management repl by hitting `]`.
+  2. Use the command `activate .` to enter the virtual environment.
+  3. Use the command `instantiate` if you have not yet installed packages.
+
+# To run
+Running the command `julia --project runPluto.jl` in the directory should start the Pluto webserver.
+
+If you want to avoid typing --project in the future, set the `JULIA_PROJECT` enviornment variable to `@.`.
 
 # Citations
 Based on papers:
