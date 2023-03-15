@@ -15,7 +15,7 @@ macro bind(def, element)
 end
 
 # ╔═╡ 44bd8931-450e-4019-8dd0-30a5b25d6078
-using Plots, CSV, DataFrames, Unitful, Measurements, PlutoUI
+using StatsPlots, CSV, DataFrames, Unitful, Measurements, PlutoUI, Plots.PlotMeasures;
 
 # ╔═╡ e6c4f7f0-e159-4231-9801-76a0ec643673
 TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
@@ -24,6 +24,371 @@ TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
 md"
 ## Introduction and Equations
 This code is based off of Cavoit et al., 2006.
+"
+
+# ╔═╡ 3660811b-8146-4111-819d-794cec160072
+md"
+## Import Parameters
+"
+
+# ╔═╡ a47c7173-317d-4394-8357-59743f5a0982
+md"
+## Setup
+### Basic Functions
+"
+
+# ╔═╡ a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
+"""
+Returns the number of turns required based on desired frequency range, toroid, and jfet properties. No reliance on noise and self inductance at all.
+
+### Examples
+```julia-repl
+julia> N = turns_from_freq(100e3, 10e6, 4, A_l, C_jfet, 2)
+N = 42.658002367554225
+```
+"""
+function turns_from_freq(F_lo, F_hi, N_toroids, A_l, C_jfet, N_jfet)
+	F0 = sqrt(F_lo*F_hi)
+	return (2 * pi * F0 * sqrt(N_toroids * A_l * C_jfet / N_jfet))^-1
+end
+
+# ╔═╡ 328d3bbc-3aa1-4e68-a3f9-997c9222f78e
+"""
+Returns the resonant frequency based on specific inductance, given turns, and total C_in.
+
+### Examples
+```julia-repl
+julia> f_r = get_resonant_frequency(A_l, N_turns, C_jfet/num_caps)
+f_r = 67.4 ± 8.4 MHz
+```
+"""
+function get_resonant_frequency(A_l, N_turns, C_in)
+	return (2*pi*sqrt(A_l * N_turns^2 * C_in)^-1) |> u"MHz"
+end
+
+# ╔═╡ 4bd00596-c1cb-4e36-81a2-687e1b19ec0e
+"""
+Calculates maximum turns that can fit in a toroid with given ID and given AWG.
+"""
+function max_turns_per_toroid(ID, d_total)
+	return pi * ID / d_total
+end
+
+# ╔═╡ 43ef91de-2b99-451a-ad20-6c9e2e5908d0
+"""
+Returns a range in log scale.
+
+### Examples
+```julia-repl
+julia> logrange(0.1,100,10) # min, max, n_steps
+[.1, 0.215443, 0.464159, 1.0, 2.15443, 4.64159, 10.0, 21.5443, 46.4159, 100.0]
+```
+
+"""
+logrange(x1, x2, n::Int64) = [10^y for y in range(log10(x1), log10(x2), length=n)]
+
+# ╔═╡ 285d9346-305b-4345-9f46-402240e7e06b
+md"""
+### Define Properties
+#### Environemntal Properties
+Temperature (T): $(@bind T_unitless NumberField(0:1000, default=300)) K
+
+#### Toroid Properties
+Toroid type: $(@bind toroid_type Select(["TN10/6/4-4A11", "TN13/7.5/5-4A11"]))
+
+Number of toroids: $(@bind num_toroids Slider(1:8, default=4, show_value=true)) toroids
+
+#### Wire Properties
+Wire type: $(@bind wire_type Select(["Cu" => "Copper", "Al" => "Aluminum", "HTCCA" => "HTCCA"]))
+
+Wire AWG: $(@bind gauge Slider(24:56, default=30, show_value=true)) AWG
+
+#### Amplifier Properties
+Number of jfets: $(@bind num_caps Slider(1:4, default=2, show_value=true)) jfets
+
+JFET Input Capacitance (C\_jfet): $(@bind C_jfet_unitless NumberField(1:1000; default=20)) pF
+
+JFET Input Voltage Noise (e\_ba): $(@bind e_ba_unitless NumberField(0:10; default=1)) nT/sqrt(Hz)
+
+JFET Input Current Noise (i\_ba): $(@bind i_ba_unitless NumberField(0:10; default=1)) pA/sqrt(Hz)
+
+#### Biasing Circuit Properties
+Biasing Circuit Input Resistance (R\_in): $(@bind R_in_unitless NumberField(0:0.01:10; default=1.5)) kΩ
+
+
+#### Feedback Properties
+Feedback Resisitance (R\_cr): $(@bind R_cr_unitless NumberField(.1:.001:10; default=1.2)) kΩ
+
+#### Define turns for model
+Number of Turns: $(@bind N_turns NumberField(1:1000; default=50)) turns
+
+Margin: $(@bind margin Slider(1:0.01:2; default=1.15, show_value=true))x
+
+
+
+"""
+
+# ╔═╡ 06f26860-d843-497f-9ae5-25594ddaddef
+begin
+	const k = 1.38e-23u"m^2*kg/(s^2*K)" # boltzmann constant
+	const T = T_unitless*u"K" # K, operating temperature
+	
+	const S = 209.5u"mm^2"; #mm^2, from Bennett 3/6/23
+	const r_loop = 194u"mm"; #mm, from Bennett 3/6/23
+	const A_loop = pi*r_loop^2 #area enclosed by loop
+	const t_loop = 4u"mm"; #mm, thickness of aluminum loop
+	@info "Imported loop properties."
+	
+	# const A_l = 348e-9 ± 0.25*348e-9 # nH, from 4A11 in 
+	toroid_list = Dict([
+		("TN13/7.5/5-4A11", [13u"mm" ± 0.35u"mm", 6.8u"mm" ± 0.35u"mm", 5.4u"mm" ± 0.35u"mm", 0.1u"mm", 358u"nH" ± 0.25*358u"nH", 700u"H/m" ± 0.2*700u"H/m"]),
+		("TN10/6/4-4A11", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 0.1u"mm", 348u"nH" ± 0.25*348u"nH", 700u"H/m" ± 0.2*700u"H/m"])
+	]);
+	# https://www.farnell.com/datasheets/650988.pdf
+	# https://www.distrelec.biz/Web/Downloads/_t/ds/tn10_eng_tds.pdf
+	@info "Imported toroid properties."
+
+	wire_list = Dict([ # in format material => electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator)
+		("Cu", [17.1u"nΩ * m", 8930u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
+		("Al", [27.9u"nΩ * m", 2700u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
+		("HTCCA", [27.8u"nΩ * m", 3630u"kg/m^3", 1200u"kg/m^3", 3u"F/m"])
+	]); # this is in nΩ * m for resisitvity, and kg/m^3 for density
+	# Note: insulation density of 1200 kg/m^3 is valid for P155, PN155, P180, and E180
+	# https://www.elektrisola.com/conductor-materials/aluminum-copper-clad-aluminum/aluminum.html
+	awg_df = try
+	CSV.File("lookup/awg.csv"; header=true, delim=',', types=Float64) |> DataFrame;
+	catch
+		@warn "No awg.csv file."
+	end
+	@info "Imported wire properties."
+
+	const C_jfet = C_jfet_unitless * 1u"pF" #pF, from https://www.mouser.com/datasheet/2/676/jfet_if1320_interfet-2888025.pdf
+	C_in = C_jfet/num_caps
+	e_ba = e_ba_unitless*1u"nV/sqrt(Hz)"
+	i_ba = i_ba_unitless*1u"pA/sqrt(Hz)"
+	@info "Imported jfet properties."
+	
+	R_in = R_in_unitless*1u"kΩ"
+	const R_cr = R_cr_unitless * 1u"kΩ"
+	@info "Imported circuit properties."
+end	
+
+# ╔═╡ 1322f57c-93ff-4c5d-9980-30fd01d5a4d3
+"""
+Returns the toroid dimensions and specific inductance.
+
+### Examples
+```julia-repl
+julia> OD_tor, ID_tor, H_tor, chamfer, A_l, μ_i = get_toroid_properties("TN10/6/4-4A11")
+[10.6±0.3 mm, 5.2±0.3 mm, 0.1±0.0 mm, 4.4±0.3 mm, 348.0±87.0 nH, 700.0±140.0 H m⁻¹]
+```
+"""
+function get_toroid_properties(toroid_type::String)
+	return get(toroid_list, toroid_type, ~)
+end
+
+# ╔═╡ f86e3141-2161-4dec-ab51-15612e30bc70
+"""
+Returns the electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator).
+
+### Examples
+```julia-repl
+julia> wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
+[17.1 m nΩ, 8930.0 kg m⁻³, 1200.0 kg m⁻³, 3.0 F m⁻¹]
+```
+"""
+function get_wire_properties(wire_type::String)
+	return get(wire_list, wire_type, ~)
+end
+
+# ╔═╡ b09a2088-a56a-4479-82ec-995e5cdf27f4
+"""
+Returns the conductor diameter d_w and insulation thickness t given AWG. Returns nothing if invalid gauge.
+
+### Examples
+```julia-repl
+julia> d_w, d_total, t = get_diameters_from_awg(32)
+(0.203±0.003 mm, 0.231 mm, 0.028±0.003 mm)
+
+julia> d_w, d_total, t = get_diameters_from_awg(22)
+(nothing, nothing, nothing)
+Warning: Not a valid gauge.
+```
+"""
+function get_diameters_from_awg(awg)
+	index = findfirst(x->x==awg, awg_df.awg)
+	if isnothing(index)
+		@warn "Not a valid gauge."
+		return nothing, nothing
+	end
+	d_w = awg_df.:"conductor diameter"[index][1]u"mm" ± awg_df.:"conductor error"[index][1]u"mm"
+	d_total = awg_df.:"total diameter"[index][1]u"mm"
+	t = d_total-d_w
+	return d_w, d_total, t 
+end
+
+# ╔═╡ a17830f1-6c78-46c4-81d5-b26867b1ad31
+begin
+	d_w, d_total, t = get_diameters_from_awg(gauge)
+	wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
+	OD_tor, ID_tor, H_tor, chamfer, A_l, μ_i = get_toroid_properties(toroid_type)
+	
+	N_max = max_turns_per_toroid(ID_tor, d_total)
+	@info "Max number of turns $toroid_type can support is $N_max turns."
+	
+	l_t = margin*2*((OD_tor - ID_tor - 2*chamfer) + (H_tor - 2*chamfer) + pi*chamfer) # m, turn length
+	L_tw = num_toroids*N_turns*l_t |> u"m"# m, total wire length
+	@info "$N_turns turns will use $L_tw of $gauge AWG wire w/ $(round(100*(margin-1)))% margin."
+	S_w = π * (d_w/2)^2 |> u"mm^2" # mm^2, Wire cross sectional area
+	ρ = wire_ρr / S_w |> u"Ω/m" # Ω/m, wire resistivity
+	r_s = (L_tw * ρ) |> u"Ω" # total resistance from windings (Ω = kg m^2/s^3 A^2)
+	@info "Total winding resisitance: $r_s"
+
+	N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_caps))
+	@info "Resonant frequency will be centered at $N_res."
+	
+	e_bt = sqrt(4*k*T*r_s) |> u"nV/sqrt(Hz)" # wound toroid johnson nyquist noise in units of nV/sqrt(Hz)
+	@info "Johnson-nyquist noise of wound toroid e_bt: $e_bt"
+
+	e_bR = sqrt(4*k*T*R_in) |> u"nV/sqrt(Hz)" # biasing circuit johnson nyquist noise in units of nV/sqrt(Hz)
+	@info "Johnson-nyquist noise of biasing circuit e_bR: $e_bR"
+end
+
+# ╔═╡ 92c0b43e-e2c8-4009-a5bb-973eba87427f
+md"""
+## Plots
+Plot Theme: $(@bind plot_theme Select([
+:default => "Default",
+:bright => "Bright",
+:vibrant => "Vibrant",
+:sand => "Sand",
+:solarized_light => "Solarized Light",
+:solarized => "Solarized",
+:juno => "Juno",
+:dark => "Dark",
+:dracula => "Dracula"], default=:juno))
+"""
+
+# ╔═╡ b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
+function error_plot(f_list, range, label_list)
+	theme(plot_theme)
+	p = plot(errorstyle=:ribbon, legend=:outerbottom, title="System Noise", xlabel="Frequency [MHz]", ylabel = "Voltage Noise [V/sqrt(Hz)]", xscale=:log10, yscale=:log10, xminorticks=10, yminorticks=10, dpi=500, size = (1200, 700), left_margin = 20px, titlefontsize=24, xlabelfontsize=18, ylabelfontsize=18, xtickfontsize=12, ytickfontsize=12)
+	for i in eachindex(f_list)
+		y = ustrip.(Measurements.value.(f_list[i].(range)))
+		dy = ustrip.(Measurements.uncertainty.(f_list[i].(range)))
+		y_matrix = 1e-9.*[y+dy y-dy]'
+		errorline!(ustrip.(range), y_matrix, label=label_list[i], errorstyle=:ribbon)
+	end
+	return p
+end
+
+# ╔═╡ d6720273-32dd-409d-bd28-542f33e67767
+function error_range(f, range)
+	y = ustrip.(Measurements.value.(f.(range)))
+	dy = ustrip.(Measurements.uncertainty.(f.(range)))
+	y_matrix = 1e-9.*[y+dy y-dy]'
+	return y_matrix
+end
+
+# ╔═╡ bcea3a66-8957-4584-99be-fa1c381b910d
+begin
+	x = 1:10
+	y = fill(NaN, 10, 100, 3)
+	for i = axes(y,3)
+	    y[:,:,i] = collect(1:2:20) .+ rand(10,100).*5 .* collect(1:2:20) .+ rand()*100
+	end
+	
+	errorline(1:10, y[:,:,1], errorstyle=:ribbon, label="Ribbon")
+	errorline!(1:10, y[:,:,2], errorstyle=:stick, label="Stick", color=:green, secondarycolor=:green)
+	errorline!(1:10, y[:,:,3], errorstyle=:plume, label="Plume")
+end
+
+# ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
+md"
+### Noise Equations
+
+Voltage noise from toroids:
+
+$v_{b1} = \frac{e_{bt}}
+{ 1 + \frac{A}{R_{in}} - (2 \pi f)^2 C_{in} A_l N_{turns}^2 }$
+
+where:
+
+$A = 2 \pi f A_l N_{turns}^2$
+
+Voltage noise from biasing circuit:
+
+$v_{b2} = \frac{e_{bR}}
+{ 1 + \frac{R_{in}}{A}}$
+
+Amplfier current noise:
+
+$v_{b3} = \frac{i_{bA}}
+{ \frac{1}{R_{in}} + \frac{1}{A}}$
+
+Amplfier voltage noise:
+
+$v_{b4} = e_{ba}$
+
+"
+
+# ╔═╡ b4ed3094-ba79-4e3e-ab69-96fa6462d07c
+A(f) = 2*pi*f*A_l*N_turns^2 |> u"Ω"
+
+# ╔═╡ c2691c78-c918-432a-a28c-2c7d840558ed
+v_b1(f) = e_bt / ( 1 + (A(f)/R_in) - (2*pi*f)^2*C_in*A_l*N_turns^2 ) |> u"nV/sqrt(Hz)"
+
+# ╔═╡ 44d0685c-cf1c-4227-89a2-80a1efc389af
+v_b2(f) = e_bR / ( 1 + (R_in/A(f)) ) |> u"nV/sqrt(Hz)"
+
+# ╔═╡ 6beab4d1-453a-4aee-bbd1-4cc524f9eedb
+v_b3(f) = i_ba / ((1/R_in) + 1/A(f)) |> u"nV/sqrt(Hz)"
+
+# ╔═╡ e1dba096-8eb8-4757-9590-c97d53bd2d5a
+v_b4(f) = e_ba
+
+# ╔═╡ 8676533e-169d-4395-867b-297d3fd2768f
+v_b(f) = sqrt(v_b1(f)^2 + v_b2(f)^2 + v_b3(f)^2 + v_b4(f)^2)
+
+# ╔═╡ f5bbbe83-5e6e-4547-822f-5b54cf5a4e86
+begin
+	xrange =[x*1u"MHz" for x in logrange(0.1,10,1000)]
+	errorline(ustrip.(xrange), error_range(v_b1, xrange))
+	errorline!(ustrip.(xrange), error_range(v_b2, xrange))
+	errorline!(ustrip.(xrange), error_range(v_b3, xrange))
+	errorline!(ustrip.(xrange), error_range(v_b4, xrange))
+	errorline!(ustrip.(xrange), error_range(v_b, xrange))
+end
+
+# ╔═╡ dd215007-ea48-40f1-aa45-eefd65bf9778
+error_plot(
+	[v_b1, v_b2, v_b3, v_b4, v_b],
+	[x*1u"MHz" for x in logrange(0.1,10,1000)],
+	[
+		"v_b1, noise from toroids",
+		"v_b2, noise from biasing circuit",
+		"v_b3, noise from amplifier current",
+		"v_b4, noise from amplifier voltage",
+		"v_b, total noise"
+	]
+)
+
+# ╔═╡ 4c5d1444-811b-4ca2-b97b-154787335cdc
+begin
+	@info A(1u"MHz")
+	@info (2*pi*1u"MHz")^2*(C_jfet/num_caps)*A_l*N_turns^2 |> NoUnits
+	@info v_b1(1u"MHz")
+	@info v_b2(1u"MHz")
+	@info v_b3(1u"MHz")
+	@info v_b4(1u"MHz")
+	@info v_b(1u"MHz")
+end
+
+# ╔═╡ 4aa6996a-7352-4c93-8d96-9e4049541640
+typeof(0.1u"MHz")
+
+# ╔═╡ d63a6833-c113-4511-be9c-6b01514b1f57
+md"
 ### Transfer Function
 In order to properly model the high freuqency loop, there are a few key components to simulate:
  1. the primary loop ($M$)
@@ -74,275 +439,7 @@ In the frequency range of interest $F_0 \sim 10e6$, $HY_{cr}>>1$, so we can simp
 $\frac{V_s}{B_0} = \frac{M}{Y_{cr}} = \frac{j\omega S R_{cr}}{r_b + j\omega(L_0 + A_l)} \approx \frac{S R_{cr}}{L_0}$
 
 meaning that the efficiency of our loop is primarily dependent on surface area of primary loop, feedback resistance, and self inductance of the toroids.
-
 "
-
-# ╔═╡ 3660811b-8146-4111-819d-794cec160072
-md"
-## Import Parameters
-"
-
-# ╔═╡ a47c7173-317d-4394-8357-59743f5a0982
-md"
-## Basic Functions
-"
-
-# ╔═╡ a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
-"""
-Returns the number of turns required based on desired frequency range, toroid, and jfet properties. No reliance on noise and self inductance at all.
-
-### Examples
-```julia-repl
-julia> N = turns_from_freq(100e3, 10e6, 4, A_l, C_jfet, 2)
-N = 42.658002367554225
-```
-"""
-function turns_from_freq(F_lo, F_hi, N_toroids, A_l, C_jfet, N_jfet)
-	F0 = sqrt(F_lo*F_hi)
-	return (2 * pi * F0 * sqrt(N_toroids * A_l * C_jfet / N_jfet))^-1
-end
-
-# ╔═╡ 328d3bbc-3aa1-4e68-a3f9-997c9222f78e
-"""
-Returns the resonant frequency based on specific inductance, given turns, and total C_in.
-
-### Examples
-```julia-repl
-julia> f_r = get_resonant_frequency(A_l, N_turns, C_jfet/num_caps)
-f_r = 67.4 ± 8.4 MHz
-```
-"""
-function get_resonant_frequency(A_l, N_turns, C_in)
-	return (2*pi*sqrt(A_l * N_turns^2 * C_in)^-1) |> u"MHz"
-end
-
-# ╔═╡ 4bd00596-c1cb-4e36-81a2-687e1b19ec0e
-"""
-Calculates maximum turns that can fit in a toroid with given ID and given AWG.
-"""
-function max_turns_per_toroid(ID, d_total)
-	return pi * ID / d_total
-end
-
-# ╔═╡ 27677f2b-f65c-437d-bbff-fac1e2af6e17
-md"
-### Obtain parameters
-"
-
-# ╔═╡ 285d9346-305b-4345-9f46-402240e7e06b
-md"""
-### Define Properties
-#### Toroid Properties
-Toroid type = $(@bind toroid_type Select(["TN10/6/4-4A11", "TN13/7.5/5-4A11"]))
-
-Number of toroids: $(@bind num_toroids Slider(1:8, default=4, show_value=true)) toroids
-
-#### Wire Properties
-Wire type = $(@bind wire_type Select(["Cu" => "Copper", "Al" => "Aluminum", "HTCCA" => "HTCCA"]))
-
-Wire AWG: $(@bind gauge Slider(24:56, default=30, show_value=true)) AWG
-
-#### Amplifier Properties
-Number of jfets: $(@bind num_caps Slider(1:4, default=2, show_value=true)) jfets
-
-JFET Input Capacitance: $(@bind C_jfet_unitless NumberField(1:1000; default=20)) pF
-
-JFET Input Voltage Noise: $(@bind e_ba_unitless NumberField(0:10; default=1)) nT/sqrt(Hz)
-
-#### Feedback Properties
-Feedback Resisitance R\_cr: $(@bind R_cr_unitless NumberField(.1:.001:10; default=1.2)) kΩ
-
-#### Define turns for model
-Number of Turns: $(@bind N_turns NumberField(1:1000; default=50)) turns
-
-Margin: $(@bind margin Slider(1:0.01:2; default=1.15, show_value=true))x
-
-
-
-"""
-
-# ╔═╡ 06f26860-d843-497f-9ae5-25594ddaddef
-begin
-	const k = 1.38e-23u"m^2*kg/(s^2*K)" # boltzmann constant
-	const T = 300u"K" # K, operating temperature
-	
-	const S = 209.5u"mm^2"; #mm^2, from Bennett 3/6/23
-	const r_loop = 194u"mm"; #mm, from Bennett 3/6/23
-	const A_loop = pi*r_loop^2 #area enclosed by loop
-	const t_loop = 4u"mm"; #mm, thickness of aluminum loop
-	@info "Imported loop properties."
-	
-	# const A_l = 348e-9 ± 0.25*348e-9 # nH, from 4A11 in 
-	toroid_list = Dict([
-		("TN13/7.5/5-4A11", [13u"mm" ± 0.35u"mm", 6.8u"mm" ± 0.35u"mm", 5.4u"mm" ± 0.35u"mm", 0.1u"mm", 358u"nH" ± 0.25*358u"nH", 700u"H/m" ± 0.2*700u"H/m"]),
-		("TN10/6/4-4A11", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 0.1u"mm", 348u"nH" ± 0.25*348u"nH", 700u"H/m" ± 0.2*700u"H/m"])
-	]);
-	# https://www.farnell.com/datasheets/650988.pdf
-	# https://www.distrelec.biz/Web/Downloads/_t/ds/tn10_eng_tds.pdf
-	@info "Imported toroid properties."
-
-	wire_list = Dict([ # in format material => electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator)
-		("Cu", [17.1u"nΩ * m", 8930u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
-		("Al", [27.9u"nΩ * m", 2700u"kg/m^3", 1200u"kg/m^3", 3u"F/m"]),
-		("HTCCA", [27.8u"nΩ * m", 3630u"kg/m^3", 1200u"kg/m^3", 3u"F/m"])
-	]); # this is in nΩ * m for resisitvity, and kg/m^3 for density
-	# Note: insulation density of 1200 kg/m^3 is valid for P155, PN155, P180, and E180
-	# https://www.elektrisola.com/conductor-materials/aluminum-copper-clad-aluminum/aluminum.html
-	awg_df = try
-	CSV.File("lookup/awg.csv"; header=true, delim=',', types=Float64) |> DataFrame;
-	catch
-		@warn "No awg.csv file."
-	end
-	@info "Imported wire properties."
-
-	const C_jfet = C_jfet_unitless * 1u"pF" #pF, from https://www.mouser.com/datasheet/2/676/jfet_if1320_interfet-2888025.pdf
-	const e_ba = e_ba_unitless * 1u"nV * sqrt(Hz)"
-	@info "Imported jfet properties."
-
-	const R_cr = R_cr_unitless * 1u"kΩ"
-	@info "Imported circuit properties."
-end	
-
-# ╔═╡ 1322f57c-93ff-4c5d-9980-30fd01d5a4d3
-"""
-Returns the toroid dimensions and specific inductance.
-
-### Examples
-```julia-repl
-julia> OD_tor, ID_tor, H_tor, chamfer, A_l, μ_i = get_toroid_properties("TN10/6/4-4A11")
-[10.6±0.3 mm, 5.2±0.3 mm, 0.1±0.0 mm, 4.4±0.3 mm, 348.0±87.0 nH, 700.0±140.0 H m⁻¹]
-```
-"""
-function get_toroid_properties(toroid_type::String)
-	return get(toroid_list, toroid_type, ~)
-end
-
-# ╔═╡ f86e3141-2161-4dec-ab51-15612e30bc70
-"""
-Returns the electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator).
-
-### Examples
-```julia-repl
-julia> wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
-[17.1 m nΩ, 8930.0 kg m⁻³, 1200.0 kg m⁻³, 3.0 F m⁻¹]
-```
-"""
-function get_wire_properties(wire_type::String)
-	return get(wire_list, wire_type, ~)
-end
-
-# ╔═╡ ff172ea6-e2bc-4eab-a379-72bed691ebda
-wire_ρr, wire_ρm, insulation_ρm, ε_r = get_wire_properties("Cu")
-
-# ╔═╡ b09a2088-a56a-4479-82ec-995e5cdf27f4
-"""
-Returns the conductor diameter d_w and insulation thickness t given AWG. Returns nothing if invalid gauge.
-
-### Examples
-```julia-repl
-julia> d_w, d_total, t = get_diameters_from_awg(32)
-(0.203±0.003 mm, 0.231 mm, 0.028±0.003 mm)
-
-julia> d_w, d_total, t = get_diameters_from_awg(22)
-(nothing, nothing, nothing)
-Warning: Not a valid gauge.
-```
-"""
-function get_diameters_from_awg(awg)
-	index = findfirst(x->x==awg, awg_df.awg)
-	if isnothing(index)
-		@warn "Not a valid gauge."
-		return nothing, nothing
-	end
-	d_w = awg_df.:"conductor diameter"[index][1]u"mm" ± awg_df.:"conductor error"[index][1]u"mm"
-	d_total = awg_df.:"total diameter"[index][1]u"mm"
-	t = d_total-d_w
-	return d_w, d_total, t 
-end
-
-# ╔═╡ 1de014e3-b354-45a4-b17d-87de58a8ad74
-d_w, d_total, t = get_diameters_from_awg(gauge)
-
-# ╔═╡ fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
-OD_tor, ID_tor, H_tor, chamfer, A_l, μ_i = get_toroid_properties(toroid_type)
-
-# ╔═╡ fabef5a0-e215-472c-a383-6a328045b129
-N_max = max_turns_per_toroid(ID_tor, d_total)
-
-# ╔═╡ 95b1daf8-80ed-41d4-ac99-4dd90038d4fa
-N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_caps))
-
-# ╔═╡ a17830f1-6c78-46c4-81d5-b26867b1ad31
-begin
-	l_t = margin*2*((OD_tor - ID_tor - 2*chamfer) + (H_tor - 2*chamfer) + pi*chamfer) # m, turn length
-	L_tw = num_toroids*N_turns*l_t |> u"m"# m, total wire length
-	@info "$N_turns turns will use $L_tw of $gauge AWG wire w/ $(round(100*(margin-1)))% margin."
-	S_w = π * (d_w/2)^2 |> u"mm^2" # mm^2, Wire cross sectional area
-	ρ = wire_ρr / S_w |> u"Ω/m" # Ω/m, wire resistivity
-	r_s = (L_tw * ρ) |> u"Ω" # total resistance from windings (Ω = kg m^2/s^3 A^2)
-	@info "Total winding resisitance: $r_s"
-
-	@info "Resonant frequency will be centered at $(get_resonant_frequency(A_l, N_turns, C_jfet/num_caps))."
-	
-	e_bt = sqrt(4*k*T*r_s) |> u"nV/sqrt(Hz)" # wound toroid johnson nyquist noise in units of nV/sqrt(Hz)
-	@info "Johnson-nyquist noise of wound toroid e_bt: $e_bt"
-end
-
-# ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
-md"
-#### Noise Equations
-
-Voltage noise from toroids:
-
-$v_{b1} = \frac{e_{bt}}
-{ 1 + \frac{A}{R_{in}} - (2 \pi f)^2 C_{in} A_l N_{turns}^2 }$
-
-where:
-
-$A = 2 \pi f A_l N_{turns}^2$
-
-Voltage noise from biasing circuit:
-
-$v_{b2} = \frac{e_{bR}}
-{ 1 + \frac{R_{in}}{A}}$
-
-Amplfier current noise:
-
-$v_{b3} = \frac{i_{bA}}
-{ \frac{1}{R_{in}} + \frac{1}{A}}$
-
-Amplfier voltage noise:
-
-$v_{b4} = e_{ba}$
-
-"
-
-# ╔═╡ b4ed3094-ba79-4e3e-ab69-96fa6462d07c
-A(f) = upreferred(2*pi*f*A_l*N_turns^2)
-
-# ╔═╡ bdc581b9-365d-4d08-860f-98654d16483c
-A(1u"MHz") |> u"Ω" #<-- this is a problem. I think the units of this should be 1/Ω
-
-# ╔═╡ 891eedc7-07c9-4d71-9d6b-7868e56b70b1
-
-
-# ╔═╡ c2691c78-c918-432a-a28c-2c7d840558ed
-v_b1(f) = e_bt / ( 1 + (A(f)/R_in) - (2*pi*f)^2*C_in*A_l*N^2 )
-
-# ╔═╡ 44d0685c-cf1c-4227-89a2-80a1efc389af
-v_b2(f) = e_bR / ( 1 + (R_in/A(f)) )
-
-# ╔═╡ 6beab4d1-453a-4aee-bbd1-4cc524f9eedb
-v_b3(f) = i_bA / ((1/R_in) + 1/A(f))
-
-# ╔═╡ e1dba096-8eb8-4757-9590-c97d53bd2d5a
-v_b4(f) = e_ba
-
-# ╔═╡ 8676533e-169d-4395-867b-297d3fd2768f
-v_b(f) = sqrt(v_b1(f)^2 + v_b2(f)^2 + v_b3(f)^2 + v_b4(f)^2)
-
-# ╔═╡ 0aea937d-b6cc-4094-b862-8d7e6dfa5d2f
-
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -352,14 +449,16 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Measurements = "eff96d63-e80a-5855-80a2-b1b0885c5ab7"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
 CSV = "~0.10.9"
 DataFrames = "~1.5.0"
 Measurements = "~2.8.0"
-Plots = "~1.38.6"
+Plots = "~1.38.8"
 PlutoUI = "~0.7.50"
+StatsPlots = "~0.15.4"
 Unitful = "~1.12.4"
 """
 
@@ -369,7 +468,17 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.0-rc1"
 manifest_format = "2.0"
-project_hash = "5713e3ad77209f96f28e5c92cc8317835a54b15a"
+project_hash = "d009338041144542934884ca0daa5bc0644531bd"
+
+[[deps.AbstractFFTs]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "16b6dbc4cf7caee4e1e75c49485ec67b667098a0"
+uuid = "621f4979-c628-5d54-868e-fcf4e3e8185c"
+version = "1.3.1"
+weakdeps = ["ChainRulesCore"]
+
+    [deps.AbstractFFTs.extensions]
+    AbstractFFTsChainRulesCoreExt = "ChainRulesCore"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -377,12 +486,40 @@ git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
 uuid = "6e696c72-6542-2067-7265-42206c756150"
 version = "1.1.4"
 
+[[deps.Adapt]]
+deps = ["LinearAlgebra", "Requires"]
+git-tree-sha1 = "cc37d689f599e8df4f464b2fa3870ff7db7492ef"
+uuid = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+version = "3.6.1"
+weakdeps = ["StaticArrays"]
+
+    [deps.Adapt.extensions]
+    AdaptStaticArraysExt = "StaticArrays"
+
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
 
+[[deps.Arpack]]
+deps = ["Arpack_jll", "Libdl", "LinearAlgebra", "Logging"]
+git-tree-sha1 = "9b9b347613394885fd1c8c7729bfc60528faa436"
+uuid = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
+version = "0.5.4"
+
+[[deps.Arpack_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS_jll", "Pkg"]
+git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
+uuid = "68821587-b530-5797-8361-c406ea357684"
+version = "3.5.1+1"
+
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
+
+[[deps.AxisAlgorithms]]
+deps = ["LinearAlgebra", "Random", "SparseArrays", "WoodburyMatrices"]
+git-tree-sha1 = "66771c8d21c8ff5e3a93379480a2307ac36863f7"
+uuid = "13072b0f-2c55-5437-9ae7-d433b7a33950"
+version = "1.0.1"
 
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -415,6 +552,18 @@ deps = ["LinearAlgebra"]
 git-tree-sha1 = "f641eb0a4f00c343bbc32346e1217b86f3ce9dad"
 uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
 version = "0.5.1"
+
+[[deps.ChainRulesCore]]
+deps = ["Compat", "LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "c6d890a52d2c4d55d326439580c3b8d0875a77d9"
+uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+version = "1.15.7"
+
+[[deps.Clustering]]
+deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "Random", "SparseArrays", "Statistics", "StatsBase"]
+git-tree-sha1 = "64df3da1d2a26f4de23871cd1b6482bb68092bd5"
+uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
+version = "0.14.3"
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
@@ -507,6 +656,12 @@ git-tree-sha1 = "bfc1187b79289637fa0ef6d4436ebdfe6905cbd6"
 uuid = "e2d170a0-9d28-54be-80f0-106bbe20a464"
 version = "1.0.0"
 
+[[deps.DataValues]]
+deps = ["DataValueInterfaces", "Dates"]
+git-tree-sha1 = "d88a19299eba280a6d062e135a43f00323ae70bf"
+uuid = "e7dc6d0d-1eca-5fa6-8ad6-5aecde8b7ea5"
+version = "0.4.13"
+
 [[deps.Dates]]
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -516,6 +671,30 @@ deps = ["Mmap"]
 git-tree-sha1 = "9e2f36d3c96a820c678f2f1f1782582fcf685bae"
 uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 version = "1.9.1"
+
+[[deps.Distances]]
+deps = ["LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI"]
+git-tree-sha1 = "49eba9ad9f7ead780bfb7ee319f962c811c6d3b2"
+uuid = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
+version = "0.10.8"
+
+[[deps.Distributed]]
+deps = ["Random", "Serialization", "Sockets"]
+uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+
+[[deps.Distributions]]
+deps = ["FillArrays", "LinearAlgebra", "PDMats", "Printf", "QuadGK", "Random", "SparseArrays", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "Test"]
+git-tree-sha1 = "da9e1a9058f8d3eec3a8c9fe4faacfb89180066b"
+uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
+version = "0.25.86"
+
+    [deps.Distributions.extensions]
+    DistributionsChainRulesCoreExt = "ChainRulesCore"
+    DistributionsDensityInterfaceExt = "DensityInterface"
+
+    [deps.Distributions.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    DensityInterface = "b429d917-457f-4dbc-8f4c-0cc954292b1d"
 
 [[deps.DocStringExtensions]]
 deps = ["LibGit2"]
@@ -527,6 +706,12 @@ version = "0.9.3"
 deps = ["ArgTools", "FileWatching", "LibCURL", "NetworkOptions"]
 uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 version = "1.6.0"
+
+[[deps.DualNumbers]]
+deps = ["Calculus", "NaNMath", "SpecialFunctions"]
+git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
+uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
+version = "0.6.8"
 
 [[deps.Expat_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -546,6 +731,18 @@ git-tree-sha1 = "74faea50c1d007c85837327f6775bea60b5492dd"
 uuid = "b22a6f82-2f65-5046-a5b2-351ab43fb4e5"
 version = "4.4.2+2"
 
+[[deps.FFTW]]
+deps = ["AbstractFFTs", "FFTW_jll", "LinearAlgebra", "MKL_jll", "Preferences", "Reexport"]
+git-tree-sha1 = "f9818144ce7c8c41edf5c4c179c684d92aa4d9fe"
+uuid = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+version = "1.6.0"
+
+[[deps.FFTW_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "c6033cc3892d0ef5bb9cd29b7f2f0331ea5184ea"
+uuid = "f5851436-0d7a-5f13-b9de-f02708fd171a"
+version = "3.3.10+0"
+
 [[deps.FilePathsBase]]
 deps = ["Compat", "Dates", "Mmap", "Printf", "Test", "UUIDs"]
 git-tree-sha1 = "e27c4ebe80e8699540f2d6c805cc12203b614f12"
@@ -554,6 +751,12 @@ version = "0.9.20"
 
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+
+[[deps.FillArrays]]
+deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
+git-tree-sha1 = "d3ba08ab64bdfd27234d3f61956c966266757fe6"
+uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
+version = "0.13.7"
 
 [[deps.FixedPointNumbers]]
 deps = ["Statistics"]
@@ -642,6 +845,12 @@ git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
 
+[[deps.HypergeometricFunctions]]
+deps = ["DualNumbers", "LinearAlgebra", "OpenLibm_jll", "SpecialFunctions", "Test"]
+git-tree-sha1 = "709d864e3ed6e3545230601f94e11ebc65994641"
+uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
+version = "0.3.11"
+
 [[deps.Hyperscript]]
 deps = ["Test"]
 git-tree-sha1 = "8d511d5b81240fc8e6802386302675bdf47737b9"
@@ -671,9 +880,21 @@ git-tree-sha1 = "9cc2baf75c6d09f9da536ddf58eb2f29dedaf461"
 uuid = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
 version = "1.4.0"
 
+[[deps.IntelOpenMP_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "d979e54b71da82f3a65b62553da4fc3d18c9004c"
+uuid = "1d5cc7b8-4909-519e-a0f8-d0f5ad9712d0"
+version = "2018.0.3+2"
+
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+
+[[deps.Interpolations]]
+deps = ["Adapt", "AxisAlgorithms", "ChainRulesCore", "LinearAlgebra", "OffsetArrays", "Random", "Ratios", "Requires", "SharedArrays", "SparseArrays", "StaticArrays", "WoodburyMatrices"]
+git-tree-sha1 = "721ec2cf720536ad005cb38f50dbba7b02419a15"
+uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+version = "0.14.7"
 
 [[deps.InvertedIndices]]
 git-tree-sha1 = "82aec7a3dd64f4d9584659dc0b62ef7db2ef3e19"
@@ -714,6 +935,12 @@ git-tree-sha1 = "6f2675ef130a300a112286de91973805fcc5ffbc"
 uuid = "aacddb02-875f-59d6-b918-886e6ef4fbf8"
 version = "2.1.91+0"
 
+[[deps.KernelDensity]]
+deps = ["Distributions", "DocStringExtensions", "FFTW", "Interpolations", "StatsBase"]
+git-tree-sha1 = "9816b296736292a80b9a3200eb7fbb57aaa3917a"
+uuid = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
+version = "0.6.5"
+
 [[deps.LAME_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "f6250b16881adf048549549fba48b1161acdac8c"
@@ -742,6 +969,10 @@ deps = ["Formatting", "InteractiveUtils", "LaTeXStrings", "MacroTools", "Markdow
 git-tree-sha1 = "2422f47b34d4b127720a18f86fa7b1aa2e141f29"
 uuid = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
 version = "0.15.18"
+
+[[deps.LazyArtifacts]]
+deps = ["Artifacts", "Pkg"]
+uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
 
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
@@ -847,6 +1078,12 @@ git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
 uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
 version = "0.1.4"
 
+[[deps.MKL_jll]]
+deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl", "Pkg"]
+git-tree-sha1 = "2ce8695e1e699b68702c03402672a69f54b8aca9"
+uuid = "856f044c-d86e-5d09-b602-aeab76dc8ba7"
+version = "2022.2.0+0"
+
 [[deps.MacroTools]]
 deps = ["Markdown", "Random"]
 git-tree-sha1 = "42324d08725e200c23d4dfb549e0d5d89dede2d2"
@@ -892,15 +1129,38 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2022.10.11"
 
+[[deps.MultivariateStats]]
+deps = ["Arpack", "LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI", "StatsBase"]
+git-tree-sha1 = "91a48569383df24f0fd2baf789df2aade3d0ad80"
+uuid = "6f286f6a-111f-5878-ab1e-185364afe411"
+version = "0.10.1"
+
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
 git-tree-sha1 = "0877504529a3e5c3343c6f8b4c0381e57e4387e4"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
 version = "1.0.2"
 
+[[deps.NearestNeighbors]]
+deps = ["Distances", "StaticArrays"]
+git-tree-sha1 = "2c3726ceb3388917602169bed973dbc97f1b51a8"
+uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
+version = "0.4.13"
+
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
+
+[[deps.Observables]]
+git-tree-sha1 = "6862738f9796b3edc1c09d0890afce4eca9e7e93"
+uuid = "510215fc-4207-5dde-b226-833fc4488ee2"
+version = "0.5.4"
+
+[[deps.OffsetArrays]]
+deps = ["Adapt"]
+git-tree-sha1 = "82d7c9e310fe55aa54996e6f7f94674e2a38fcb4"
+uuid = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
+version = "1.12.9"
 
 [[deps.Ogg_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -952,6 +1212,12 @@ deps = ["Artifacts", "Libdl"]
 uuid = "efcefdf7-47ab-520b-bdef-62a2eaa19f15"
 version = "10.42.0+0"
 
+[[deps.PDMats]]
+deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
+git-tree-sha1 = "67eae2738d63117a196f497d7db789821bce61d1"
+uuid = "90014a1f-27ba-587c-ab20-58faa44d9150"
+version = "0.11.17"
+
 [[deps.Parsers]]
 deps = ["Dates", "SnoopPrecompile"]
 git-tree-sha1 = "478ac6c952fddd4399e71d4779797c538d0ff2bf"
@@ -988,9 +1254,9 @@ version = "1.3.4"
 
 [[deps.Plots]]
 deps = ["Base64", "Contour", "Dates", "Downloads", "FFMPEG", "FixedPointNumbers", "GR", "JLFzf", "JSON", "LaTeXStrings", "Latexify", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "Preferences", "Printf", "REPL", "Random", "RecipesBase", "RecipesPipeline", "Reexport", "RelocatableFolders", "Requires", "Scratch", "Showoff", "SnoopPrecompile", "SparseArrays", "Statistics", "StatsBase", "UUIDs", "UnicodeFun", "Unzip"]
-git-tree-sha1 = "da1d3fb7183e38603fcdd2061c47979d91202c97"
+git-tree-sha1 = "f49a45a239e13333b8b936120fe6d793fe58a972"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "1.38.6"
+version = "1.38.8"
 
     [deps.Plots.extensions]
     FileIOExt = "FileIO"
@@ -1040,6 +1306,12 @@ git-tree-sha1 = "0c03844e2231e12fda4d0086fd7cbe4098ee8dc5"
 uuid = "ea2cea3b-5b76-57ae-a6ef-0a8af62496e1"
 version = "5.15.3+2"
 
+[[deps.QuadGK]]
+deps = ["DataStructures", "LinearAlgebra"]
+git-tree-sha1 = "6ec7ac8412e83d57e313393220879ede1740f9ee"
+uuid = "1fd47b50-473d-5c70-9696-f719f8f3bcdc"
+version = "2.8.2"
+
 [[deps.REPL]]
 deps = ["InteractiveUtils", "Markdown", "Sockets", "Unicode"]
 uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
@@ -1047,6 +1319,12 @@ uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 [[deps.Random]]
 deps = ["SHA", "Serialization"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[[deps.Ratios]]
+deps = ["Requires"]
+git-tree-sha1 = "dc84268fe0e3335a62e315a3a7cf2afa7178a734"
+uuid = "c84ed2f1-dad5-54f0-aa8e-dbefe2724439"
+version = "0.4.3"
 
 [[deps.RecipesBase]]
 deps = ["SnoopPrecompile"]
@@ -1077,15 +1355,27 @@ git-tree-sha1 = "838a3a4188e2ded87a4f9f184b4b0d78a1e91cb7"
 uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "1.3.0"
 
+[[deps.Rmath]]
+deps = ["Random", "Rmath_jll"]
+git-tree-sha1 = "f65dcb5fa46aee0cf9ed6274ccbd597adc49aa7b"
+uuid = "79098fc4-a85e-5d69-aa6a-4863f24498fa"
+version = "0.7.1"
+
+[[deps.Rmath_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "6ed52fdd3382cf21947b15e8870ac0ddbff736da"
+uuid = "f50d1b31-88e8-58de-be2c-1cc44531875f"
+version = "0.4.0+0"
+
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
 
 [[deps.Scratch]]
 deps = ["Dates"]
-git-tree-sha1 = "f94f779c94e58bf9ea243e77a37e16d9de9126bd"
+git-tree-sha1 = "30449ee12237627992a99d5e30ae63e4d78cd24a"
 uuid = "6c6a2e73-6563-6170-7368-637461726353"
-version = "1.1.1"
+version = "1.2.0"
 
 [[deps.SentinelArrays]]
 deps = ["Dates", "Random"]
@@ -1095,6 +1385,10 @@ version = "1.3.18"
 
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+
+[[deps.SharedArrays]]
+deps = ["Distributed", "Mmap", "Random", "Serialization"]
+uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
 [[deps.Showoff]]
 deps = ["Dates", "Grisu"]
@@ -1131,12 +1425,21 @@ deps = ["IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_j
 git-tree-sha1 = "ef28127915f4229c971eb43f3fc075dd3fe91880"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
 version = "2.2.0"
+weakdeps = ["ChainRulesCore"]
 
     [deps.SpecialFunctions.extensions]
     SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
 
-    [deps.SpecialFunctions.weakdeps]
-    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+[[deps.StaticArrays]]
+deps = ["LinearAlgebra", "Random", "StaticArraysCore", "Statistics"]
+git-tree-sha1 = "6aa098ef1012364f2ede6b17bf358c7f1fbe90d4"
+uuid = "90137ffa-7385-5640-81b9-e52037218182"
+version = "1.5.17"
+
+[[deps.StaticArraysCore]]
+git-tree-sha1 = "6b7ba252635a5eff6a0b0664a41ee140a1c9e72a"
+uuid = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
+version = "1.4.0"
 
 [[deps.Statistics]]
 deps = ["LinearAlgebra", "SparseArrays"]
@@ -1155,10 +1458,34 @@ git-tree-sha1 = "d1bf48bfcc554a3761a133fe3a9bb01488e06916"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.21"
 
+[[deps.StatsFuns]]
+deps = ["HypergeometricFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
+git-tree-sha1 = "f625d686d5a88bcd2b15cd81f18f98186fdc0c9a"
+uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
+version = "1.3.0"
+
+    [deps.StatsFuns.extensions]
+    StatsFunsChainRulesCoreExt = "ChainRulesCore"
+    StatsFunsInverseFunctionsExt = "InverseFunctions"
+
+    [deps.StatsFuns.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    InverseFunctions = "3587e190-3f89-42d0-90ee-14403ec27112"
+
+[[deps.StatsPlots]]
+deps = ["AbstractFFTs", "Clustering", "DataStructures", "DataValues", "Distributions", "Interpolations", "KernelDensity", "LinearAlgebra", "MultivariateStats", "NaNMath", "Observables", "Plots", "RecipesBase", "RecipesPipeline", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
+git-tree-sha1 = "e0d5bc26226ab1b7648278169858adcfbd861780"
+uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
+version = "0.15.4"
+
 [[deps.StringManipulation]]
 git-tree-sha1 = "46da2434b41f41ac3594ee9816ce5541c6096123"
 uuid = "892a3eda-7b42-436c-8928-eab12a02cf0e"
 version = "0.3.0"
+
+[[deps.SuiteSparse]]
+deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
+uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
 
 [[deps.SuiteSparse_jll]]
 deps = ["Artifacts", "Libdl", "Pkg", "libblastrampoline_jll"]
@@ -1169,6 +1496,12 @@ version = "5.10.1+6"
 deps = ["Dates"]
 uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 version = "1.0.3"
+
+[[deps.TableOperations]]
+deps = ["SentinelArrays", "Tables", "Test"]
+git-tree-sha1 = "e383c87cf2a1dc41fa30c093b2a19877c83e1bc1"
+uuid = "ab02a1b2-a7df-11e8-156e-fb1833f50b87"
+version = "1.2.0"
 
 [[deps.TableTraits]]
 deps = ["IteratorInterfaceExtensions"]
@@ -1254,6 +1587,18 @@ deps = ["DataAPI", "InlineStrings", "Parsers"]
 git-tree-sha1 = "b1be2855ed9ed8eac54e5caff2afcdb442d52c23"
 uuid = "ea10d353-3f73-51f8-a26c-33c1cb351aa5"
 version = "1.4.2"
+
+[[deps.Widgets]]
+deps = ["Colors", "Dates", "Observables", "OrderedCollections"]
+git-tree-sha1 = "fcdae142c1cfc7d89de2d11e08721d0f2f86c98a"
+uuid = "cc8bc4a8-27d6-5769-a93b-9d913e69aa62"
+version = "0.6.6"
+
+[[deps.WoodburyMatrices]]
+deps = ["LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "de67fa59e33ad156a590055375a30b23c40299d3"
+uuid = "efce3f68-66dc-5838-9240-27a6d6f5f9b6"
+version = "0.5.5"
 
 [[deps.WorkerUtilities]]
 git-tree-sha1 = "cd1659ba0d57b71a464a29e64dbc67cfe83d54e7"
@@ -1484,31 +1829,32 @@ version = "1.4.1+0"
 # ╠═e6c4f7f0-e159-4231-9801-76a0ec643673
 # ╟─4392a6f5-e8dd-4fe6-b765-d21e14c32461
 # ╟─3660811b-8146-4111-819d-794cec160072
-# ╠═06f26860-d843-497f-9ae5-25594ddaddef
+# ╟─06f26860-d843-497f-9ae5-25594ddaddef
 # ╟─a47c7173-317d-4394-8357-59743f5a0982
 # ╟─1322f57c-93ff-4c5d-9980-30fd01d5a4d3
 # ╟─f86e3141-2161-4dec-ab51-15612e30bc70
 # ╟─b09a2088-a56a-4479-82ec-995e5cdf27f4
-# ╠═a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
+# ╟─a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
 # ╟─328d3bbc-3aa1-4e68-a3f9-997c9222f78e
 # ╟─4bd00596-c1cb-4e36-81a2-687e1b19ec0e
-# ╟─27677f2b-f65c-437d-bbff-fac1e2af6e17
-# ╟─1de014e3-b354-45a4-b17d-87de58a8ad74
-# ╟─fd0b8652-d48e-4818-9c90-f5b7dfa56c4f
-# ╟─ff172ea6-e2bc-4eab-a379-72bed691ebda
-# ╟─fabef5a0-e215-472c-a383-6a328045b129
-# ╠═95b1daf8-80ed-41d4-ac99-4dd90038d4fa
+# ╟─43ef91de-2b99-451a-ad20-6c9e2e5908d0
 # ╟─285d9346-305b-4345-9f46-402240e7e06b
 # ╟─a17830f1-6c78-46c4-81d5-b26867b1ad31
-# ╠═bdc581b9-365d-4d08-860f-98654d16483c
+# ╟─92c0b43e-e2c8-4009-a5bb-973eba87427f
+# ╠═b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
+# ╠═d6720273-32dd-409d-bd28-542f33e67767
+# ╠═f5bbbe83-5e6e-4547-822f-5b54cf5a4e86
+# ╠═dd215007-ea48-40f1-aa45-eefd65bf9778
+# ╠═bcea3a66-8957-4584-99be-fa1c381b910d
 # ╟─c702b936-d809-4235-9d11-29e619d31d37
+# ╠═4c5d1444-811b-4ca2-b97b-154787335cdc
 # ╠═b4ed3094-ba79-4e3e-ab69-96fa6462d07c
-# ╠═891eedc7-07c9-4d71-9d6b-7868e56b70b1
 # ╠═c2691c78-c918-432a-a28c-2c7d840558ed
 # ╠═44d0685c-cf1c-4227-89a2-80a1efc389af
 # ╠═6beab4d1-453a-4aee-bbd1-4cc524f9eedb
 # ╠═e1dba096-8eb8-4757-9590-c97d53bd2d5a
 # ╠═8676533e-169d-4395-867b-297d3fd2768f
-# ╠═0aea937d-b6cc-4094-b862-8d7e6dfa5d2f
+# ╠═4aa6996a-7352-4c93-8d96-9e4049541640
+# ╟─d63a6833-c113-4511-be9c-6b01514b1f57
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
