@@ -254,141 +254,9 @@ begin
 	@info "Johnson-nyquist noise of biasing circuit e_bR: $e_bR"
 end
 
-# ╔═╡ 92c0b43e-e2c8-4009-a5bb-973eba87427f
-md"""
-## Plots
-Plot Theme: $(@bind plot_theme Select([
-:default => "Default",
-:bright => "Bright",
-:vibrant => "Vibrant",
-:sand => "Sand",
-:solarized_light => "Solarized Light",
-:solarized => "Solarized",
-:juno => "Juno",
-:dark => "Dark",
-:dracula => "Dracula"], default=:juno))
-"""
-
-# ╔═╡ b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
-function error_plot(f_list, range, label_list)
-	theme(plot_theme)
-	p = plot(errorstyle=:ribbon, legend=:outerbottom, title="System Noise", xlabel="Frequency [MHz]", ylabel = "Voltage Noise [V/sqrt(Hz)]", xscale=:log10, yscale=:log10, xminorticks=10, yminorticks=10, dpi=500, size = (1200, 700), left_margin = 20px, titlefontsize=24, xlabelfontsize=18, ylabelfontsize=18, xtickfontsize=12, ytickfontsize=12)
-	for i in eachindex(f_list)
-		y = ustrip.(Measurements.value.(f_list[i].(range)))
-		dy = ustrip.(Measurements.uncertainty.(f_list[i].(range)))
-		y_matrix = 1e-9.*[y+dy y-dy]'
-		errorline!(ustrip.(range), y_matrix, label=label_list[i], errorstyle=:ribbon)
-	end
-	return p
-end
-
-# ╔═╡ d6720273-32dd-409d-bd28-542f33e67767
-function error_range(f, range)
-	y = ustrip.(Measurements.value.(f.(range)))
-	dy = ustrip.(Measurements.uncertainty.(f.(range)))
-	y_matrix = 1e-9.*[y+dy y-dy]'
-	return y_matrix
-end
-
-# ╔═╡ bcea3a66-8957-4584-99be-fa1c381b910d
-begin
-	x = 1:10
-	y = fill(NaN, 10, 100, 3)
-	for i = axes(y,3)
-	    y[:,:,i] = collect(1:2:20) .+ rand(10,100).*5 .* collect(1:2:20) .+ rand()*100
-	end
-	
-	errorline(1:10, y[:,:,1], errorstyle=:ribbon, label="Ribbon")
-	errorline!(1:10, y[:,:,2], errorstyle=:stick, label="Stick", color=:green, secondarycolor=:green)
-	errorline!(1:10, y[:,:,3], errorstyle=:plume, label="Plume")
-end
-
-# ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
-md"
-### Noise Equations
-
-Voltage noise from toroids:
-
-$v_{b1} = \frac{e_{bt}}
-{ 1 + \frac{A}{R_{in}} - (2 \pi f)^2 C_{in} A_l N_{turns}^2 }$
-
-where:
-
-$A = 2 \pi f A_l N_{turns}^2$
-
-Voltage noise from biasing circuit:
-
-$v_{b2} = \frac{e_{bR}}
-{ 1 + \frac{R_{in}}{A}}$
-
-Amplfier current noise:
-
-$v_{b3} = \frac{i_{bA}}
-{ \frac{1}{R_{in}} + \frac{1}{A}}$
-
-Amplfier voltage noise:
-
-$v_{b4} = e_{ba}$
-
-"
-
-# ╔═╡ b4ed3094-ba79-4e3e-ab69-96fa6462d07c
-A(f) = 2*pi*f*A_l*N_turns^2 |> u"Ω"
-
-# ╔═╡ c2691c78-c918-432a-a28c-2c7d840558ed
-v_b1(f) = e_bt / ( 1 + (A(f)/R_in) - (2*pi*f)^2*C_in*A_l*N_turns^2 ) |> u"nV/sqrt(Hz)"
-
-# ╔═╡ 44d0685c-cf1c-4227-89a2-80a1efc389af
-v_b2(f) = e_bR / ( 1 + (R_in/A(f)) ) |> u"nV/sqrt(Hz)"
-
-# ╔═╡ 6beab4d1-453a-4aee-bbd1-4cc524f9eedb
-v_b3(f) = i_ba / ((1/R_in) + 1/A(f)) |> u"nV/sqrt(Hz)"
-
-# ╔═╡ e1dba096-8eb8-4757-9590-c97d53bd2d5a
-v_b4(f) = e_ba
-
-# ╔═╡ 8676533e-169d-4395-867b-297d3fd2768f
-v_b(f) = sqrt(v_b1(f)^2 + v_b2(f)^2 + v_b3(f)^2 + v_b4(f)^2)
-
-# ╔═╡ f5bbbe83-5e6e-4547-822f-5b54cf5a4e86
-begin
-	xrange =[x*1u"MHz" for x in logrange(0.1,10,1000)]
-	errorline(ustrip.(xrange), error_range(v_b1, xrange))
-	errorline!(ustrip.(xrange), error_range(v_b2, xrange))
-	errorline!(ustrip.(xrange), error_range(v_b3, xrange))
-	errorline!(ustrip.(xrange), error_range(v_b4, xrange))
-	errorline!(ustrip.(xrange), error_range(v_b, xrange))
-end
-
-# ╔═╡ dd215007-ea48-40f1-aa45-eefd65bf9778
-error_plot(
-	[v_b1, v_b2, v_b3, v_b4, v_b],
-	[x*1u"MHz" for x in logrange(0.1,10,1000)],
-	[
-		"v_b1, noise from toroids",
-		"v_b2, noise from biasing circuit",
-		"v_b3, noise from amplifier current",
-		"v_b4, noise from amplifier voltage",
-		"v_b, total noise"
-	]
-)
-
-# ╔═╡ 4c5d1444-811b-4ca2-b97b-154787335cdc
-begin
-	@info A(1u"MHz")
-	@info (2*pi*1u"MHz")^2*(C_jfet/num_caps)*A_l*N_turns^2 |> NoUnits
-	@info v_b1(1u"MHz")
-	@info v_b2(1u"MHz")
-	@info v_b3(1u"MHz")
-	@info v_b4(1u"MHz")
-	@info v_b(1u"MHz")
-end
-
-# ╔═╡ 4aa6996a-7352-4c93-8d96-9e4049541640
-typeof(0.1u"MHz")
-
 # ╔═╡ d63a6833-c113-4511-be9c-6b01514b1f57
 md"
+## Electrokinetic Modelling
 ### Transfer Function
 In order to properly model the high freuqency loop, there are a few key components to simulate:
  1. the primary loop ($M$)
@@ -439,7 +307,152 @@ In the frequency range of interest $F_0 \sim 10e6$, $HY_{cr}>>1$, so we can simp
 $\frac{V_s}{B_0} = \frac{M}{Y_{cr}} = \frac{j\omega S R_{cr}}{r_b + j\omega(L_0 + A_l)} \approx \frac{S R_{cr}}{L_0}$
 
 meaning that the efficiency of our loop is primarily dependent on surface area of primary loop, feedback resistance, and self inductance of the toroids.
+
+#### Transfer Function Functions
 "
+
+# ╔═╡ 103d06ae-87e7-4ee0-b67a-3859761ffa34
+# Transfer functions go here
+
+# ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
+md"
+### Modelling Noise
+
+Assume no B input, so add a new noise contributor in system.
+
+#### Noise Equations
+
+Voltage noise from toroids:
+
+$v_{b1} = \frac{e_{bt}}
+{ 1 + \frac{A}{R_{in}} - (2 \pi f)^2 C_{in} A_l N_{turns}^2 }$
+
+where:
+
+$A = 2 \pi f A_l N_{turns}^2$
+
+Voltage noise from biasing circuit:
+
+$v_{b2} = \frac{e_{bR}}
+{ 1 + \frac{R_{in}}{A}}$
+
+Amplfier current noise:
+
+$v_{b3} = \frac{i_{bA}}
+{ \frac{1}{R_{in}} + \frac{1}{A}}$
+
+Amplfier voltage noise:
+
+$v_{b4} = e_{ba}$
+
+#### Noise Equation Functions
+"
+
+# ╔═╡ b4ed3094-ba79-4e3e-ab69-96fa6462d07c
+A(f) = 2*pi*f*A_l*N_turns^2 |> u"Ω"
+
+# ╔═╡ c2691c78-c918-432a-a28c-2c7d840558ed
+v_b1(f) = e_bt / ( 1 + (A(f)/R_in) - (2*pi*f)^2*C_in*A_l*N_turns^2 ) |> u"nV/sqrt(Hz)"
+
+# ╔═╡ 44d0685c-cf1c-4227-89a2-80a1efc389af
+v_b2(f) = e_bR / ( 1 + (R_in/A(f)) ) |> u"nV/sqrt(Hz)"
+
+# ╔═╡ 6beab4d1-453a-4aee-bbd1-4cc524f9eedb
+v_b3(f) = i_ba / ((1/R_in) + 1/A(f)) |> u"nV/sqrt(Hz)"
+
+# ╔═╡ e1dba096-8eb8-4757-9590-c97d53bd2d5a
+v_b4(f) = e_ba
+
+# ╔═╡ 8676533e-169d-4395-867b-297d3fd2768f
+v_b(f) = sqrt(v_b1(f)^2 + v_b2(f)^2 + v_b3(f)^2 + v_b4(f)^2)
+
+# ╔═╡ 4c5d1444-811b-4ca2-b97b-154787335cdc
+begin
+	@info A(1u"MHz")
+	@info (2*pi*1u"MHz")^2*(C_jfet/num_caps)*A_l*N_turns^2 |> NoUnits
+	@info v_b1(1u"MHz")
+	@info v_b2(1u"MHz")
+	@info v_b3(1u"MHz")
+	@info v_b4(1u"MHz")
+	@info v_b(1u"MHz")
+end
+
+# ╔═╡ 92c0b43e-e2c8-4009-a5bb-973eba87427f
+md"""
+## Plots
+Plot Theme: $(@bind plot_theme Select([
+:default => "Default",
+:bright => "Bright",
+:vibrant => "Vibrant",
+:sand => "Sand",
+:solarized_light => "Solarized Light",
+:solarized => "Solarized",
+:juno => "Juno",
+:dark => "Dark",
+:dracula => "Dracula"], default=:juno))
+"""
+
+# ╔═╡ b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
+"""
+Takes a list of functions to plot as well the frequency range (in proper units), and formats the data in a way that can be plotted using the errorline function from StatsPlots. Provide a list of labels for the plot, as well as colors. 
+
+### Examples
+```julia-repl
+julia> system_noise_error_plot(
+	[v_b1, v_b2, v_b3, v_b4, v_b],
+	[x*1u"MHz" for x in logrange(0.1,10,1000)],
+	[
+		"v_b1, noise from toroids",
+		"v_b2, noise from biasing circuit",
+		"v_b3, noise from amplifier current",
+		"v_b4, noise from amplifier voltage",
+		"v_b, total noise"
+	],
+	[
+		:blue,
+		:orange,
+		:green,
+		:purple,
+		:red
+	]
+)
+```
+"""
+function system_noise_error_plot(f_list, range, label_list, color_list)
+	theme(plot_theme)
+	p = plot(errorstyle=:ribbon, legend=:outerbottom, title="System Noise Contributors", xlabel="Frequency [MHz]", ylabel = "Voltage Noise [V/sqrt(Hz)]", xscale=:log10, yscale=:log10, xminorticks=10, yminorticks=10, dpi=500, size = (1200, 900), left_margin = 20px, titlefontsize=24, xlabelfontsize=18, ylabelfontsize=18, xtickfontsize=12, ytickfontsize=12, legendfontsize=12)
+	for i in eachindex(f_list)
+		y = ustrip.(Measurements.value.(f_list[i].(range)))
+		dy = ustrip.(Measurements.uncertainty.(f_list[i].(range)))
+		y_matrix = 1e-9.*[y+dy y-dy]'
+		p = errorline!(ustrip.(range), y_matrix, label=label_list[i], errorstyle=:ribbon, linewidth = 3)
+		# temporary fix for errorline pallette bug:
+		# https://github.com/JuliaPlots/StatsPlots.jl/pull/524
+		p[1][i][:linecolor] = color_list[i]
+		p[1][i][:fillcolor] = color_list[i]
+	end	
+	return p
+end
+
+# ╔═╡ 4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
+system_noise_error_plot(
+	[v_b1, v_b2, v_b3, v_b4, v_b],
+	[x*1u"MHz" for x in logrange(0.1,10,1000)],
+	[
+		"v_b1, noise from toroids",
+		"v_b2, noise from biasing circuit",
+		"v_b3, noise from amplifier current",
+		"v_b4, noise from amplifier voltage",
+		"v_b, total noise"
+	],
+	[
+		:blue,
+		:orange,
+		:green,
+		:purple,
+		:red
+	]
+)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1840,21 +1853,18 @@ version = "1.4.1+0"
 # ╟─43ef91de-2b99-451a-ad20-6c9e2e5908d0
 # ╟─285d9346-305b-4345-9f46-402240e7e06b
 # ╟─a17830f1-6c78-46c4-81d5-b26867b1ad31
-# ╟─92c0b43e-e2c8-4009-a5bb-973eba87427f
-# ╠═b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
-# ╠═d6720273-32dd-409d-bd28-542f33e67767
-# ╠═f5bbbe83-5e6e-4547-822f-5b54cf5a4e86
-# ╠═dd215007-ea48-40f1-aa45-eefd65bf9778
-# ╠═bcea3a66-8957-4584-99be-fa1c381b910d
-# ╟─c702b936-d809-4235-9d11-29e619d31d37
-# ╠═4c5d1444-811b-4ca2-b97b-154787335cdc
-# ╠═b4ed3094-ba79-4e3e-ab69-96fa6462d07c
-# ╠═c2691c78-c918-432a-a28c-2c7d840558ed
-# ╠═44d0685c-cf1c-4227-89a2-80a1efc389af
-# ╠═6beab4d1-453a-4aee-bbd1-4cc524f9eedb
-# ╠═e1dba096-8eb8-4757-9590-c97d53bd2d5a
-# ╠═8676533e-169d-4395-867b-297d3fd2768f
-# ╠═4aa6996a-7352-4c93-8d96-9e4049541640
 # ╟─d63a6833-c113-4511-be9c-6b01514b1f57
+# ╠═103d06ae-87e7-4ee0-b67a-3859761ffa34
+# ╟─c702b936-d809-4235-9d11-29e619d31d37
+# ╟─b4ed3094-ba79-4e3e-ab69-96fa6462d07c
+# ╟─c2691c78-c918-432a-a28c-2c7d840558ed
+# ╟─44d0685c-cf1c-4227-89a2-80a1efc389af
+# ╟─6beab4d1-453a-4aee-bbd1-4cc524f9eedb
+# ╟─e1dba096-8eb8-4757-9590-c97d53bd2d5a
+# ╟─8676533e-169d-4395-867b-297d3fd2768f
+# ╟─4c5d1444-811b-4ca2-b97b-154787335cdc
+# ╟─92c0b43e-e2c8-4009-a5bb-973eba87427f
+# ╟─b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
+# ╟─4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
