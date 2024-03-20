@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.22
+# v0.19.26
 
 using Markdown
 using InteractiveUtils
@@ -161,6 +161,7 @@ function sensor_setup(label="generic_sensor",
 	
 	# Ω, sensor resistance
 	R = L_tw * ρ 
+	@info "sensor resistance is $R Ohms"
 	# H, sensor self inductance 
 	L = (L_c/L_w)^(2/5) * μ_r * μ_0 * N^2 * π * (d/2)^2 / L_c
 	# F, sensor self capacitance
@@ -218,30 +219,6 @@ begin
 		470e3, 		# Ω, preamp input resistance, F64
 		2e-11, 		# F, preamp input capacitance, F64
 	    33e-9,     	# F, C1 value, F64
-	)
-
-	DUCHESS_4 = sensor_setup("3\" FAST-like",
-		## physical dimesnions
-		0.1016,	 	# m, sensor length, F64
-		0.09144, 	# m, winding length, F64
-		0.0085,  	# m, sensor diameter, F64
-		0.0085, 		# m, diabolo ends diameter, F64
-		2500,		# #, number of turns, I64
-		
-		## wire parameters
-		36,			# AWG
-		"Cu",	# Wire type (HTCCA, Cu, Al)
-	
-		## core parameters
-		2500, 		# μ_r, relative permeability, I64
-		300, 		# K, operating temperature, I64
-		
-		## preamp circuit parameters
-		2.2e-9, 	# V/sqrt(Hz), preamp voltage noise, F64
-		5e-13,	 	# A/sqrt(Hz), preamp current noise, F64
-		470e3, 		# Ω, preamp input resistance, F64
-		2e-11, 		# F, preamp input capacitance, F64
-	    33e-13,     # F, C1 value, F64
 	)
 	
 	DIABOLO_8 = sensor_setup("8\" Diabolo",
@@ -415,6 +392,9 @@ end
 # ╔═╡ a3cfb4f3-927a-4210-a425-adccb7216b1c
 sensor_setup(DUCHESS_8)
 
+# ╔═╡ 51f6a8bb-b682-4ecd-b5fc-ae0b5d0fe06c
+
+
 # ╔═╡ c3857cb2-8c5b-11eb-3071-7b31d2a6d34a
 begin
 	ω = 10 .^ (0:.05:6) # range to plot (1 - 10^6 Hz)
@@ -501,13 +481,45 @@ end
 # ╔═╡ 2ce7cf20-882c-11eb-1cd5-5b61b1141a9f
 begin
 	duchess_8_results=run_transimpedance(DUCHESS_8)
-	duchess_4_results=run_transimpedance(DUCHESS_4)
 	diabolo_8_results =run_transimpedance(DIABOLO_8)
 	diabolo_3_results =run_transimpedance(DIABOLO_3)
 	hfloop_results=run_transimpedance(hfloop)
 	DM_results=run_transimpedance(DM)
 	DM2_results=run_transimpedance(DM2)
 	Coillot_results=run_transimpedance(Coillot)
+end
+
+# ╔═╡ b088f6ca-b2f2-41a4-8b66-23ecbe1639ca
+DUCHESS_4 = sensor_setup("3C95 8000",
+		## physical dimesnions
+		0.09652,	 	# m, sensor length, F64
+		0.085, 	# m, winding length, F64
+		0.007,  	# m, sensor diameter, F64
+		0.007, 		# m, diabolo ends diameter, F64
+		2000,		# #, number of turns, I64
+		
+		## wire parameters
+		36,			# AWG
+		"Cu",	# Wire type (HTCCA, Cu, Al)
+	
+		## core parameters
+		3000, 		# μ_r, relative permeability, I64
+		300, 		# K, operating temperature, I64
+		
+		## preamp circuit parameters
+		1e-9, 	# V/sqrt(Hz), preamp voltage noise, F64
+		2e-12,	 	# A/sqrt(Hz), preamp current noise, F64
+		10e3, 		# Ω, preamp input resistance, F64
+		330e-12, 		# F, preamp input capacitance, F64
+	    100e-9,     # F, C1 value, F64
+	)
+
+# ╔═╡ f28809cc-a146-49a7-b65b-5ffef36f8b34
+duchess_4_results=run_transimpedance(DUCHESS_4)
+
+# ╔═╡ 6319f588-f260-4f81-ac66-c2d5d197d3fd
+begin
+	plot_nemi([duchess_4_results],"NEMI")
 end
 
 # ╔═╡ 07ef82a0-855a-11eb-1fe9-0dc5d7235062
@@ -782,9 +794,9 @@ Plots = "~1.38.5"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.0-beta4"
+julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "c45ab1b16180d1377a638a17e9185ff6df46c2ba"
+project_hash = "85bdb9a37ee958c44356108d76aabc87a3d738c7"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -864,7 +876,7 @@ version = "3.44.0"
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
-version = "1.0.2+0"
+version = "1.0.5+0"
 
 [[deps.Contour]]
 git-tree-sha1 = "d05d9e7b7aedff4e5b51a029dced05cfb6125781"
@@ -1222,7 +1234,7 @@ version = "1.1.7"
 [[deps.MbedTLS_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
-version = "2.28.0+0"
+version = "2.28.2+0"
 
 [[deps.Measures]]
 git-tree-sha1 = "c13304c81eec1ed3af7fc20e75fb6b26092a1102"
@@ -1261,7 +1273,7 @@ version = "1.3.5+1"
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
 uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
-version = "0.3.21+0"
+version = "0.3.21+4"
 
 [[deps.OpenLibm_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -1322,7 +1334,7 @@ version = "0.40.1+0"
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-version = "1.9.0"
+version = "1.9.2"
 
 [[deps.PlotThemes]]
 deps = ["PlotUtils", "Statistics"]
@@ -1731,7 +1743,7 @@ version = "0.15.1+0"
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
-version = "5.4.0+0"
+version = "5.8.0+0"
 
 [[deps.libfdk_aac_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1788,9 +1800,13 @@ version = "1.4.1+0"
 # ╠═addc08a0-602f-11eb-3670-63b35a6756c7
 # ╠═a3cfb4f3-927a-4210-a425-adccb7216b1c
 # ╠═37644ac0-604d-11eb-1556-a5d7d6c26980
+# ╠═51f6a8bb-b682-4ecd-b5fc-ae0b5d0fe06c
 # ╠═027ad440-8c18-11eb-25de-a9728e496e84
 # ╠═c3857cb2-8c5b-11eb-3071-7b31d2a6d34a
 # ╠═2ce7cf20-882c-11eb-1cd5-5b61b1141a9f
+# ╟─f28809cc-a146-49a7-b65b-5ffef36f8b34
+# ╠═6319f588-f260-4f81-ac66-c2d5d197d3fd
+# ╠═b088f6ca-b2f2-41a4-8b66-23ecbe1639ca
 # ╠═07ef82a0-855a-11eb-1fe9-0dc5d7235062
 # ╠═e9693774-0f36-4805-a3a8-965c1e5a35d1
 # ╠═fa915f62-e452-4498-b894-8ef9a71fc2d9
