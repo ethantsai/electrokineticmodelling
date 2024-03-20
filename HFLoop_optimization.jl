@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.22
+# v0.19.25
 
 using Markdown
 using InteractiveUtils
@@ -58,7 +58,7 @@ Returns the resonant frequency based on specific inductance, given turns, and to
 
 ### Examples
 ```julia-repl
-julia> f_r = get_resonant_frequency(A_l, N_turns, C_jfet/num_caps)
+julia> f_r = get_resonant_frequency(A_l, N_turns, C_jfet/num_jfets)
 f_r = 67.4 ± 8.4 MHz
 ```
 """
@@ -72,6 +72,12 @@ Calculates maximum turns that can fit in a toroid with given ID and given AWG.
 """
 function max_turns_per_toroid(ID, d_total)
 	return pi * ID / d_total
+end
+
+# ╔═╡ 9dbd2dfd-5899-4c1f-aca4-c53d4c6b7a61
+begin
+	dBV2gain(dBV) = 10^(dBV/20)
+	gain2dBV(gain) = 20*log10(gain)
 end
 
 # ╔═╡ 43ef91de-2b99-451a-ad20-6c9e2e5908d0
@@ -90,8 +96,19 @@ logrange(x1, x2, n::Int64) = [10^y for y in range(log10(x1), log10(x2), length=n
 # ╔═╡ 285d9346-305b-4345-9f46-402240e7e06b
 md"""
 ### Define Properties
-#### Environemntal Properties
+#### Environmental Properties
 Temperature (T): $(@bind T_unitless NumberField(0:1000, default=300)) K
+
+#### Loop Properties
+Loop Surface: $(@bind S_unitless NumberField(0.01:0.01:1000, default=210)) mm^2
+
+Loop Radius: $(@bind r_loop_unitless NumberField(0.01:0.01:1000, default=194)) mm
+
+Loop Thickness: $(@bind t_loop_unitless NumberField(0.01:0.01:40, default=4)) mm
+
+Loop Resistance: $(@bind r_b_unitless NumberField(0.01:0.01:10, default=5)) Ω
+
+Loop Self Inductance: $(@bind L_0_unitless NumberField(0.01:0.01:10000, default=5)) nH
 
 #### Toroid Properties
 Toroid type: $(@bind toroid_type Select(["TN10/6/4-4A11", "TN13/7.5/5-4A11"]))
@@ -104,7 +121,7 @@ Wire type: $(@bind wire_type Select(["Cu" => "Copper", "Al" => "Aluminum", "HTCC
 Wire AWG: $(@bind gauge Slider(24:56, default=30, show_value=true)) AWG
 
 #### Amplifier Properties
-Number of jfets: $(@bind num_caps Slider(1:4, default=2, show_value=true)) jfets
+Number of jfets: $(@bind num_jfets Slider(1:4, default=2, show_value=true)) jfets
 
 JFET Input Capacitance (C\_jfet): $(@bind C_jfet_unitless NumberField(1:1000; default=20)) pF
 
@@ -133,10 +150,12 @@ begin
 	const k = 1.38e-23u"m^2*kg/(s^2*K)" # boltzmann constant
 	const T = T_unitless*u"K" # K, operating temperature
 	
-	const S = 209.5u"mm^2"; #mm^2, from Bennett 3/6/23
-	const r_loop = 194u"mm"; #mm, from Bennett 3/6/23
-	const A_loop = pi*r_loop^2 #area enclosed by loop
-	const t_loop = 4u"mm"; #mm, thickness of aluminum loop
+	S = S_unitless * 1u"mm^2"; #mm^2
+	r_loop = r_loop_unitless * 1u"mm"; #mm
+	A_loop = pi*r_loop^2 #area enclosed by loop
+	t_loop = t_loop_unitless * 1u"mm"; #mm, thickness of aluminum loop
+	r_b = r_b_unitless * 1u"Ω"; #Ω, loop resistance
+	L_0 = L_0_unitless * 1u"nH" #nH, loop self inductance
 	@info "Imported loop properties."
 	
 	# const A_l = 348e-9 ± 0.25*348e-9 # nH, from 4A11 in 
@@ -163,7 +182,7 @@ begin
 	@info "Imported wire properties."
 
 	const C_jfet = C_jfet_unitless * 1u"pF" #pF, from https://www.mouser.com/datasheet/2/676/jfet_if1320_interfet-2888025.pdf
-	C_in = C_jfet/num_caps
+	C_in = C_jfet/num_jfets
 	e_ba = e_ba_unitless*1u"nV/sqrt(Hz)"
 	i_ba = i_ba_unitless*1u"pA/sqrt(Hz)"
 	@info "Imported jfet properties."
@@ -244,7 +263,7 @@ begin
 	r_s = (L_tw * ρ) |> u"Ω" # total resistance from windings (Ω = kg m^2/s^3 A^2)
 	@info "Total winding resisitance: $r_s"
 
-	N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_caps))
+	N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_jfets))
 	@info "Resonant frequency will be centered at $N_res."
 	
 	e_bt = sqrt(4*k*T*r_s) |> u"nV/sqrt(Hz)" # wound toroid johnson nyquist noise in units of nV/sqrt(Hz)
@@ -308,11 +327,69 @@ $\frac{V_s}{B_0} = \frac{M}{Y_{cr}} = \frac{j\omega S R_{cr}}{r_b + j\omega(L_0 
 
 meaning that the efficiency of our loop is primarily dependent on surface area of primary loop, feedback resistance, and self inductance of the toroids.
 
+
+However, this has no frequency dependence, which is weird to me, so let's actually derive the proper real component of the equation. The form is:
+
+$\text{re}\Bigg[\frac{iA}{B+iC}\Bigg] = \frac{AC}{B^2 + C^2}$
+
+where, for $\frac{V_s}{B_0}$:
+
+$A =  S R_{cr} \omega,\quad B =  r_{b} ,\quad C =  (L_0+A_l)\omega$
+
+and, for $M$:
+
+$A =  S \omega,\quad B =  r_{b} ,\quad C =  (L_0+A_l)\omega$
+
+and, for $H$:
+
+$A =  -A_l N H_a \omega,\quad B =  1 + \frac{r_s}{R_{in}} - (\omega^2 A_l N^2 C_{in}) ,\quad C =  \Bigg[\frac{A_lN^2}{R_{in}} r_s C_{in}\Bigg]\omega$
+
 #### Transfer Function Functions
 "
 
-# ╔═╡ 103d06ae-87e7-4ee0-b67a-3859761ffa34
-# Transfer functions go here
+# ╔═╡ 6f0539b1-a46c-4df7-a8e2-9982bd929288
+find_real(A, B, C) = A * C / ( B^2 + C^2 )
+
+# ╔═╡ e18ca91f-0d7c-4799-bd44-bcf768cb3ddd
+M(ω) = find_real(
+	S*ω,
+	r_b,
+	(L_0 + A_l) * ω) |> u"A/T"
+
+# ╔═╡ 92f0a942-e5fa-4bdf-aa65-b6e07b1a63b7
+Y_cr = 1/R_cr |> u"kΩ^-1"
+
+# ╔═╡ a8959b07-e857-4144-99b2-431a68faf22b
+H_a = dBV2gain(40)
+
+# ╔═╡ 9caf6df9-bac8-4ab6-ad8d-a7d578a107aa
+H(ω) = find_real(
+	-A_l * N_turns * H_a * ω,
+	1 + (r_s/R_in) - (A_l * N_turns^2 * C_in * ω^2),
+	((A_l*N_turns^2/R_in) + (r_s*C_in))*ω
+) |> u"kΩ"
+
+# ╔═╡ 91a2d5c9-aad9-433f-9cea-6b89f007379d
+H(1000u"kHz")
+
+# ╔═╡ 490b91ba-4d2f-4c7f-abd5-7ea64b834178
+TF(ω) = abs((M(ω)*H(ω)) / (1-(H(ω)*Y_cr))) |> u"V/nT"
+
+# ╔═╡ 40ab265a-8584-462f-9095-a58cbd6bc2a8
+TF2(ω) = find_real(
+	S*R_cr*ω,
+	r_b,
+	(L_0 + A_l) * ω
+) |> u"V/nT"
+
+# ╔═╡ bab15754-71d0-4f2b-b1e5-eb34e6519aed
+begin
+	temp_x = logrange(0.1,100,100)*1u"MHz"
+	plot(temp_x, [TF.(temp_x) TF2.(temp_x)])
+end
+
+# ╔═╡ ab778fd6-2057-4426-9b71-00974270ba02
+TF2(10u"kHz")
 
 # ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
 md"
@@ -369,7 +446,7 @@ v_b(f) = sqrt(v_b1(f)^2 + v_b2(f)^2 + v_b3(f)^2 + v_b4(f)^2)
 # ╔═╡ 4c5d1444-811b-4ca2-b97b-154787335cdc
 begin
 	@info A(1u"MHz")
-	@info (2*pi*1u"MHz")^2*(C_jfet/num_caps)*A_l*N_turns^2 |> NoUnits
+	@info (2*pi*1u"MHz")^2*(C_jfet/num_jfets)*A_l*N_turns^2 |> NoUnits
 	@info v_b1(1u"MHz")
 	@info v_b2(1u"MHz")
 	@info v_b3(1u"MHz")
@@ -454,6 +531,16 @@ system_noise_error_plot(
 	]
 )
 
+# ╔═╡ 602199e4-9c56-431c-aa84-d629a099c702
+begin
+	frequency_range = [x*1u"MHz" for x in logrange(0.01,1000,100)]
+	plot(frequency_range, TF.(frequency_range), 
+		xrange = (0.01, 1000), yminorticks=10, xminorticks=10, xscale=:log10, yscale=:log10, title = "Transfer Function")
+end
+
+# ╔═╡ 6ea12533-685c-4e3b-9da6-5319424f38b5
+TF(10e5u"Hz")
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
@@ -479,7 +566,7 @@ Unitful = "~1.12.4"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.0-rc1"
+julia_version = "1.9.2"
 manifest_format = "2.0"
 project_hash = "d009338041144542934884ca0daa5bc0644531bd"
 
@@ -621,7 +708,7 @@ weakdeps = ["Dates", "LinearAlgebra"]
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
-version = "1.0.2+0"
+version = "1.0.5+0"
 
 [[deps.ConstructionBase]]
 deps = ["LinearAlgebra"]
@@ -725,6 +812,12 @@ deps = ["Calculus", "NaNMath", "SpecialFunctions"]
 git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
 uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
 version = "0.6.8"
+
+[[deps.EpollShim_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "8e9441ee83492030ace98f9789a654a6d0b1f643"
+uuid = "2702e6a9-849d-5ed8-8c21-79e8b8f9ee43"
+version = "0.0.20230411+0"
 
 [[deps.Expat_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1251,7 +1344,7 @@ version = "0.40.1+0"
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-version = "1.9.0"
+version = "1.9.2"
 
 [[deps.PlotThemes]]
 deps = ["PlotUtils", "Statistics"]
@@ -1584,7 +1677,7 @@ uuid = "41fe7b60-77ed-43a1-b4f0-825fd5a5650d"
 version = "0.2.0"
 
 [[deps.Wayland_jll]]
-deps = ["Artifacts", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
+deps = ["Artifacts", "EpollShim_jll", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
 git-tree-sha1 = "ed8d92d9774b077c53e1da50fd81a36af3744c1c"
 uuid = "a2964d1f-97da-50d4-b82a-358c7fce9d89"
 version = "1.21.0+0"
@@ -1788,7 +1881,7 @@ version = "0.15.1+0"
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
-version = "5.4.0+0"
+version = "5.8.0+0"
 
 [[deps.libfdk_aac_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1838,8 +1931,8 @@ version = "1.4.1+0"
 """
 
 # ╔═╡ Cell order:
-# ╠═44bd8931-450e-4019-8dd0-30a5b25d6078
-# ╠═e6c4f7f0-e159-4231-9801-76a0ec643673
+# ╟─44bd8931-450e-4019-8dd0-30a5b25d6078
+# ╟─e6c4f7f0-e159-4231-9801-76a0ec643673
 # ╟─4392a6f5-e8dd-4fe6-b765-d21e14c32461
 # ╟─3660811b-8146-4111-819d-794cec160072
 # ╟─06f26860-d843-497f-9ae5-25594ddaddef
@@ -1850,11 +1943,21 @@ version = "1.4.1+0"
 # ╟─a1cb22d0-7de2-4033-8643-1d8a89ab3d7d
 # ╟─328d3bbc-3aa1-4e68-a3f9-997c9222f78e
 # ╟─4bd00596-c1cb-4e36-81a2-687e1b19ec0e
+# ╟─9dbd2dfd-5899-4c1f-aca4-c53d4c6b7a61
 # ╟─43ef91de-2b99-451a-ad20-6c9e2e5908d0
 # ╟─285d9346-305b-4345-9f46-402240e7e06b
 # ╟─a17830f1-6c78-46c4-81d5-b26867b1ad31
 # ╟─d63a6833-c113-4511-be9c-6b01514b1f57
-# ╠═103d06ae-87e7-4ee0-b67a-3859761ffa34
+# ╠═6f0539b1-a46c-4df7-a8e2-9982bd929288
+# ╠═e18ca91f-0d7c-4799-bd44-bcf768cb3ddd
+# ╠═92f0a942-e5fa-4bdf-aa65-b6e07b1a63b7
+# ╠═a8959b07-e857-4144-99b2-431a68faf22b
+# ╠═9caf6df9-bac8-4ab6-ad8d-a7d578a107aa
+# ╠═91a2d5c9-aad9-433f-9cea-6b89f007379d
+# ╠═490b91ba-4d2f-4c7f-abd5-7ea64b834178
+# ╠═bab15754-71d0-4f2b-b1e5-eb34e6519aed
+# ╠═40ab265a-8584-462f-9095-a58cbd6bc2a8
+# ╠═ab778fd6-2057-4426-9b71-00974270ba02
 # ╟─c702b936-d809-4235-9d11-29e619d31d37
 # ╟─b4ed3094-ba79-4e3e-ab69-96fa6462d07c
 # ╟─c2691c78-c918-432a-a28c-2c7d840558ed
@@ -1865,6 +1968,8 @@ version = "1.4.1+0"
 # ╟─4c5d1444-811b-4ca2-b97b-154787335cdc
 # ╟─92c0b43e-e2c8-4009-a5bb-973eba87427f
 # ╟─b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
-# ╟─4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
+# ╠═4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
+# ╠═602199e4-9c56-431c-aa84-d629a099c702
+# ╠═6ea12533-685c-4e3b-9da6-5319424f38b5
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
