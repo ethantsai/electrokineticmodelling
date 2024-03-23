@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.25
+# v0.19.40
 
 using Markdown
 using InteractiveUtils
@@ -15,7 +15,7 @@ macro bind(def, element)
 end
 
 # ╔═╡ 44bd8931-450e-4019-8dd0-30a5b25d6078
-using StatsPlots, CSV, DataFrames, Unitful, Measurements, PlutoUI, Plots.PlotMeasures;
+using StatsPlots, CSV, DataFrames, Unitful, Measurements, PlutoUI, Plots.PlotMeasures, RollingFunctions;
 
 # ╔═╡ e6c4f7f0-e159-4231-9801-76a0ec643673
 TableOfContents(title="HF Loop Optimization", indent=true, depth=4, aside=true)
@@ -102,7 +102,7 @@ Temperature (T): $(@bind T_unitless NumberField(0:1000, default=300)) K
 #### Loop Properties
 Loop Surface: $(@bind S_unitless NumberField(0.01:0.01:1000, default=210)) mm^2
 
-Loop Radius: $(@bind r_loop_unitless NumberField(0.01:0.01:1000, default=194)) mm
+Loop Radius: $(@bind r_loop_unitless NumberField(0.01:0.01:1000, default=97)) mm
 
 Loop Thickness: $(@bind t_loop_unitless NumberField(0.01:0.01:40, default=4)) mm
 
@@ -134,7 +134,7 @@ Biasing Circuit Input Resistance (R\_in): $(@bind R_in_unitless NumberField(0:0.
 
 
 #### Feedback Properties
-Feedback Resisitance (R\_cr): $(@bind R_cr_unitless NumberField(.1:.001:10; default=1.2)) kΩ
+Feedback Resisitance (R\_cr): $(@bind R_cr_unitless NumberField(.1:.001:10; default=3.01)) kΩ
 
 #### Define turns for model
 Number of Turns: $(@bind N_turns NumberField(1:1000; default=50)) turns
@@ -382,14 +382,14 @@ TF2(ω) = find_real(
 	(L_0 + A_l) * ω
 ) |> u"V/nT"
 
-# ╔═╡ bab15754-71d0-4f2b-b1e5-eb34e6519aed
-begin
-	temp_x = logrange(0.1,100,100)*1u"MHz"
-	plot(temp_x, [TF.(temp_x) TF2.(temp_x)])
-end
-
 # ╔═╡ ab778fd6-2057-4426-9b71-00974270ba02
 TF2(10u"kHz")
+
+# ╔═╡ bab15754-71d0-4f2b-b1e5-eb34e6519aed
+begin
+	temp_x = logrange(0.1,1000,100)*1u"MHz"
+	plot(temp_x, [TF.(temp_x) TF2.(temp_x)], xscale=:log10, yscale=:log10, legend=false, xlim=(0.3, 50))
+end
 
 # ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
 md"
@@ -538,8 +538,135 @@ begin
 		xrange = (0.01, 1000), yminorticks=10, xminorticks=10, xscale=:log10, yscale=:log10, title = "Transfer Function")
 end
 
-# ╔═╡ 6ea12533-685c-4e3b-9da6-5319424f38b5
-TF(10e5u"Hz")
+# ╔═╡ 9777f399-0ee3-40c3-b023-65cf04b71734
+md"""
+## Measured Values
+
+Loop Current Measurement CSV: $(@bind loop_current_csv_name Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "Loop current measurement EElab.csv"))
+
+Gain CSV Name 1: $(@bind gain_csv_name_1 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM7 EElab Gain shield can.csv"))
+
+Noise CSV Name 1: $(@bind noise_csv_name_1 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM7 EElab noise shield can.csv"))
+
+Gain CSV Name 2: $(@bind gain_csv_name_2 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM8 EElab Gain shield can.csv"))
+
+Noise CSV Name 2: $(@bind noise_csv_name_2 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM8 EElab noise shield can.csv"))
+
+System Impedance: $(@bind impedance_Ohm_unitless NumberField(0.01:0.01:1000, default=50)) Ω
+
+R\_shunt: $(@bind R_shunt_unitless NumberField(0.01:0.01:50, default=1)) Ω
+
+Driver loop distance: $(@bind z_distance_unitless NumberField(0.01:0.01:1000, default=15)) mm
+
+Moving Average: $(@bind moving_avg Slider(0:2:20; default=4, show_value=true))
+"""
+
+# ╔═╡ 44ed1931-2f74-4dfe-808d-3a5941dde05e
+md"""
+## Driver Loop Design
+
+Since direct meausrement of B_0 is not possible, we measure the voltage across the shunt resistor for the driver loop in order to obtain the transfer function.
+
+The transfer function equation is as follows:
+
+$\frac{V_s}{B_0} = \alpha \cdot \frac{V_s}{V_{shunt}}$
+
+where $\alpha$ is a the conversion from V to nT. The B field of a loop with radius R, given at point that is at a point that is Z away from the center of the loop is given by Biot-Savart:
+
+$B_0 = \frac{\mu_0 \cdot I_{loop}}{2R} \frac{R^3}{(Z^2+R^2)^{3/2}} = \frac{\mu_0 \cdot V_{shunt} / R_{shunt}}{2R} \frac{R^3}{(Z^2+R^2)^{3/2}}$
+
+So, if we can measure the shunt voltage and the output signal, then all we need is
+
+$\alpha = \frac{2  R_{shunt} (Z^2+R^2)^{3/2}}{\mu_0 R^2}$
+
+to convert between V and nT.
+
+"""
+
+# ╔═╡ 0e18a6ec-a252-4fbf-ba0b-40d92ff3767f
+begin
+	impedance_Ohm = impedance_Ohm_unitless * 1u"Ω"; #Ω
+	R_shunt = R_shunt_unitless * 1u"Ω"; #Ω
+	z_distance = z_distance_unitless  * 1u"mm"; #mm
+	V2nT = R_shunt * 2 * (z_distance^2+r_loop^2)^(3/2) / ((4*pi*10^-7)*1u"N/A^2" * r_loop^2 ) |> u"V/nT"
+	
+	function dBm_to_Vpp(dBm)
+	    # Convert dBm to Watts
+	    power_W = 10 ^ ((dBm - 30) / 10)  * 1u"W"
+	    # Convert power (W) to voltage (V)
+	    voltage_V = sqrt(power_W * impedance_Ohm);
+	    # Obtain peak to peak voltage
+	    Vpp = voltage_V * 2 * sqrt(2)
+	    return Vpp |> u"V"
+	end
+
+	df0 = CSV.read("data/$loop_current_csv_name", DataFrame);
+	
+	df1_gain = CSV.read("data/$gain_csv_name_1", DataFrame);
+	df1_noise = CSV.read("data/$noise_csv_name_1", DataFrame);
+
+	df2_gain = CSV.read("data/$gain_csv_name_2", DataFrame);
+	df2_noise = CSV.read("data/$noise_csv_name_2", DataFrame);
+
+	f = df0[:,1] .* 1e-6u"MHz";
+	in_Vpp = dBm_to_Vpp.(df0[:,2]);
+	out_Vpp_1 = dBm_to_Vpp.(df1_gain[:,2]);
+	noise_Vpp_1 = dBm_to_Vpp.(df1_noise[:,2]);
+	out_Vpp_2 = dBm_to_Vpp.(df2_gain[:,2]);
+	noise_Vpp_2 = dBm_to_Vpp.(df2_noise[:,2]);
+
+	T1 = out_Vpp_1 .* V2nT ./ in_Vpp;
+	T2 = out_Vpp_2 .* V2nT ./ in_Vpp;	
+
+	NEMI1 = noise_Vpp_1 .* 1u"Hz^(-1/2)"./ T1
+	NEMI2 = noise_Vpp_2 .* 1u"Hz^(-1/2)" ./ T2
+
+	NEMI1_avg = rollmean(NEMI1, moving_avg)
+	NEMI2_avg = rollmean(NEMI2, moving_avg)
+end
+
+# ╔═╡ 8043725d-dddf-48d3-9ee8-e4dc36a9f79f
+html"""<style>
+main {
+    max-width: 1200px;
+}
+"""
+
+# ╔═╡ a95db3bc-2999-45f7-84b1-6c33ef4d2366
+begin
+	plotly()
+	
+	function hexcolor(r::UInt8, g::UInt8, b::UInt8)
+	    return RGB(Int(r)/255,Int(g)/255,Int(b)/255)
+	end
+	
+	# Ethan's colorblind friendlier color palette
+	et_black = hexcolor(0x00,0x00,0x00); # black
+	et_gray = hexcolor(0xd3,0xd3,0xd3); # gray
+	et_red = hexcolor(0xB3,0x00,0x07); # red
+	et_reddish_orange = hexcolor(0xD5,0x5E,0x00); # reddish orange
+	et_orange = hexcolor(0xE6,0x9F,0x00); # orange
+	et_yellow = hexcolor(0xF0,0xE4,0x42); # yellow
+	et_green = hexcolor(0x00,0x9E,0x73); # green
+	et_light_green = hexcolor(0x00,0xDA,0xA0); # green
+	et_blue = hexcolor(0x00,0x72,0xB2); # blue
+	et_light_blue = hexcolor(0x56,0xB4,0xE9); # light blue
+	et_purplish_pink = hexcolor(0xCC,0x79,0xA7); # purplish pink
+	et_purple = hexcolor(0x91,0x64,0xc2); # purple
+	
+	ethans_colors = [et_red, et_green, et_blue, et_purple, et_orange, et_light_blue, et_purplish_pink, et_reddish_orange];
+end
+
+# ╔═╡ eaf0530e-8250-438a-93cb-d5413384d243
+begin
+	scatter(f, ustrip.([T1, T2]), xscale=:log10, yscale=:log10, xlim=(.3,50), ylim = (.01,1), minorticks=true,  markersize=1, markerstrokewidth=0, label = [gain_csv_name_1[1:3] gain_csv_name_2[1:3]], color = [et_orange et_blue],size = (1000,600))
+end
+
+# ╔═╡ 82f94f15-00c0-494b-a6fd-66b1b31f7862
+begin
+	scatter(f, [NEMI1, NEMI2], color = [et_orange et_blue], xscale=:log10, yscale=:log10, minorticks=true,  markersize=1, markeralpha=.5, markerstrokewidth=0, label=false)
+	plot!(f[(moving_avg÷2):end-moving_avg÷2], [NEMI1_avg, NEMI2_avg], label = [noise_csv_name_1[1:3] noise_csv_name_2[1:3]], color = [et_orange et_blue], size = (1000,600))
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -549,6 +676,7 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Measurements = "eff96d63-e80a-5855-80a2-b1b0885c5ab7"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+RollingFunctions = "b0e4dd01-7b14-53d8-9b45-175a3e362653"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
@@ -558,6 +686,7 @@ DataFrames = "~1.5.0"
 Measurements = "~2.8.0"
 Plots = "~1.38.8"
 PlutoUI = "~0.7.50"
+RollingFunctions = "~0.8.0"
 StatsPlots = "~0.15.4"
 Unitful = "~1.12.4"
 """
@@ -566,9 +695,9 @@ Unitful = "~1.12.4"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.2"
+julia_version = "1.9.4"
 manifest_format = "2.0"
-project_hash = "d009338041144542934884ca0daa5bc0644531bd"
+project_hash = "bde529183b9d60156ba245b6e4eb3811df09bcf7"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -585,6 +714,12 @@ deps = ["Pkg"]
 git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
 uuid = "6e696c72-6542-2067-7265-42206c756150"
 version = "1.1.4"
+
+[[deps.AccurateArithmetic]]
+deps = ["LinearAlgebra", "Random", "VectorizationBase"]
+git-tree-sha1 = "07af26e8d08c211ef85918f3e25d4c0990d20d70"
+uuid = "22286c92-06ac-501d-9306-4abd417d9753"
+version = "0.3.8"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
@@ -612,6 +747,28 @@ git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
 uuid = "68821587-b530-5797-8361-c406ea357684"
 version = "3.5.1+1"
 
+[[deps.ArrayInterface]]
+deps = ["Adapt", "LinearAlgebra", "Requires", "SparseArrays", "SuiteSparse"]
+git-tree-sha1 = "c5aeb516a84459e0318a02507d2261edad97eb75"
+uuid = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
+version = "7.7.1"
+
+    [deps.ArrayInterface.extensions]
+    ArrayInterfaceBandedMatricesExt = "BandedMatrices"
+    ArrayInterfaceBlockBandedMatricesExt = "BlockBandedMatrices"
+    ArrayInterfaceCUDAExt = "CUDA"
+    ArrayInterfaceGPUArraysCoreExt = "GPUArraysCore"
+    ArrayInterfaceStaticArraysCoreExt = "StaticArraysCore"
+    ArrayInterfaceTrackerExt = "Tracker"
+
+    [deps.ArrayInterface.weakdeps]
+    BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
+    BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+    StaticArraysCore = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
+    Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
+
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
@@ -629,11 +786,23 @@ git-tree-sha1 = "43b1a4a8f797c1cddadf60499a8a077d4af2cd2d"
 uuid = "d1d4a3ce-64b1-5f1a-9ba4-7e7e69966f35"
 version = "0.1.7"
 
+[[deps.BitTwiddlingConvenienceFunctions]]
+deps = ["Static"]
+git-tree-sha1 = "0c5f81f47bbbcf4aea7b2959135713459170798b"
+uuid = "62783981-4cbd-42fc-bca8-16325de8dc4b"
+version = "0.1.5"
+
 [[deps.Bzip2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "19a35467a82e236ff51bc17a3a44b69ef35185a2"
 uuid = "6e34b625-4abd-537c-b88f-471c36dfa7a0"
 version = "1.0.8+0"
+
+[[deps.CPUSummary]]
+deps = ["CpuId", "IfElse", "PrecompileTools", "Static"]
+git-tree-sha1 = "601f7e7b3d36f18790e2caf83a882d88e9b71ff1"
+uuid = "2a0fbf3d-bb9c-48f3-b0a9-814d99fd7ab9"
+version = "0.2.4"
 
 [[deps.CSV]]
 deps = ["CodecZlib", "Dates", "FilePathsBase", "InlineStrings", "Mmap", "Parsers", "PooledArrays", "SentinelArrays", "SnoopPrecompile", "Tables", "Unicode", "WeakRefStrings", "WorkerUtilities"]
@@ -658,6 +827,12 @@ deps = ["Compat", "LinearAlgebra", "SparseArrays"]
 git-tree-sha1 = "c6d890a52d2c4d55d326439580c3b8d0875a77d9"
 uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 version = "1.15.7"
+
+[[deps.CloseOpenIntervals]]
+deps = ["Static", "StaticArrayInterface"]
+git-tree-sha1 = "70232f82ffaab9dc52585e0dd043b5e0c6b714f1"
+uuid = "fb6a15b2-703c-40df-9091-08a04967cfa9"
+version = "0.1.12"
 
 [[deps.Clustering]]
 deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "Random", "SparseArrays", "Statistics", "StatsBase"]
@@ -728,6 +903,12 @@ version = "1.5.1"
 git-tree-sha1 = "d05d9e7b7aedff4e5b51a029dced05cfb6125781"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.2"
+
+[[deps.CpuId]]
+deps = ["Markdown"]
+git-tree-sha1 = "fcbb72b032692610bfbdb15018ac16a36cf2e406"
+uuid = "adafc99b-e345-5852-983c-f28acb93d879"
+version = "0.3.1"
 
 [[deps.Crayons]]
 git-tree-sha1 = "249fe38abf76d48563e2f4556bebd215aa317e15"
@@ -849,6 +1030,12 @@ git-tree-sha1 = "c6033cc3892d0ef5bb9cd29b7f2f0331ea5184ea"
 uuid = "f5851436-0d7a-5f13-b9de-f02708fd171a"
 version = "3.3.10+0"
 
+[[deps.FastBroadcast]]
+deps = ["ArrayInterface", "LinearAlgebra", "Polyester", "Static", "StaticArrayInterface", "StrideArraysCore"]
+git-tree-sha1 = "a6e756a880fc419c8b41592010aebe6a5ce09136"
+uuid = "7034ab61-46d4-4ed7-9d0f-46aef9175898"
+version = "0.2.8"
+
 [[deps.FilePathsBase]]
 deps = ["Compat", "Dates", "Mmap", "Printf", "Test", "UUIDs"]
 git-tree-sha1 = "e27c4ebe80e8699540f2d6c805cc12203b614f12"
@@ -951,6 +1138,12 @@ git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
 
+[[deps.HostCPUFeatures]]
+deps = ["BitTwiddlingConvenienceFunctions", "IfElse", "Libdl", "Static"]
+git-tree-sha1 = "eb8fed28f4994600e29beef49744639d985a04b2"
+uuid = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
+version = "0.1.16"
+
 [[deps.HypergeometricFunctions]]
 deps = ["DualNumbers", "LinearAlgebra", "OpenLibm_jll", "SpecialFunctions", "Test"]
 git-tree-sha1 = "709d864e3ed6e3545230601f94e11ebc65994641"
@@ -974,6 +1167,11 @@ deps = ["Logging", "Random"]
 git-tree-sha1 = "f7be53659ab06ddc986428d3a9dcc95f6fa6705a"
 uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
 version = "0.2.2"
+
+[[deps.IfElse]]
+git-tree-sha1 = "debdd00ffef04665ccbb3e150747a77560e8fad1"
+uuid = "615f187c-cbe4-4ef1-ba3b-2fcf58d6d173"
+version = "0.1.1"
 
 [[deps.IniFile]]
 git-tree-sha1 = "f550e6e32074c939295eb5ea6de31849ac2c9625"
@@ -1041,6 +1239,11 @@ git-tree-sha1 = "6f2675ef130a300a112286de91973805fcc5ffbc"
 uuid = "aacddb02-875f-59d6-b918-886e6ef4fbf8"
 version = "2.1.91+0"
 
+[[deps.KahanSummation]]
+git-tree-sha1 = "6292e7878fe190651e74148edb11356dbbc2e194"
+uuid = "8e2b3108-d4c1-50be-a7a2-16352aec75c3"
+version = "0.3.1"
+
 [[deps.KernelDensity]]
 deps = ["Distributions", "DocStringExtensions", "FFTW", "Interpolations", "StatsBase"]
 git-tree-sha1 = "9816b296736292a80b9a3200eb7fbb57aaa3917a"
@@ -1076,6 +1279,12 @@ git-tree-sha1 = "2422f47b34d4b127720a18f86fa7b1aa2e141f29"
 uuid = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
 version = "0.15.18"
 
+[[deps.LayoutPointers]]
+deps = ["ArrayInterface", "LinearAlgebra", "ManualMemory", "SIMDTypes", "Static", "StaticArrayInterface"]
+git-tree-sha1 = "62edfee3211981241b57ff1cedf4d74d79519277"
+uuid = "10f19ff3-798f-405d-979b-55457f8fc047"
+version = "0.1.15"
+
 [[deps.LazyArtifacts]]
 deps = ["Artifacts", "Pkg"]
 uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
@@ -1083,12 +1292,12 @@ uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
 uuid = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
-version = "0.6.3"
+version = "0.6.4"
 
 [[deps.LibCURL_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
 uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
-version = "7.84.0+0"
+version = "8.4.0+0"
 
 [[deps.LibGit2]]
 deps = ["Base64", "NetworkOptions", "Printf", "SHA"]
@@ -1097,7 +1306,7 @@ uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
 [[deps.LibSSH2_jll]]
 deps = ["Artifacts", "Libdl", "MbedTLS_jll"]
 uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
-version = "1.10.2+0"
+version = "1.11.0+1"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -1179,6 +1388,21 @@ git-tree-sha1 = "cedb76b37bc5a6c702ade66be44f831fa23c681e"
 uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 version = "1.0.0"
 
+[[deps.LoopVectorization]]
+deps = ["ArrayInterface", "CPUSummary", "CloseOpenIntervals", "DocStringExtensions", "HostCPUFeatures", "IfElse", "LayoutPointers", "LinearAlgebra", "OffsetArrays", "PolyesterWeave", "PrecompileTools", "SIMDTypes", "SLEEFPirates", "Static", "StaticArrayInterface", "ThreadingUtilities", "UnPack", "VectorizationBase"]
+git-tree-sha1 = "0f5648fbae0d015e3abe5867bca2b362f67a5894"
+uuid = "bdcacae8-1622-11e9-2a5c-532679323890"
+version = "0.12.166"
+
+    [deps.LoopVectorization.extensions]
+    ForwardDiffExt = ["ChainRulesCore", "ForwardDiff"]
+    SpecialFunctionsExt = "SpecialFunctions"
+
+    [deps.LoopVectorization.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+    SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+
 [[deps.MIMEs]]
 git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
 uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
@@ -1195,6 +1419,11 @@ deps = ["Markdown", "Random"]
 git-tree-sha1 = "42324d08725e200c23d4dfb549e0d5d89dede2d2"
 uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 version = "0.5.10"
+
+[[deps.ManualMemory]]
+git-tree-sha1 = "bcaef4fc7a0cfe2cba636d84cda54b5e4e4ca3cd"
+uuid = "d125e4d3-2237-4719-b19c-fa641b8a4667"
+version = "0.1.8"
 
 [[deps.Markdown]]
 deps = ["Base64"]
@@ -1384,11 +1613,29 @@ git-tree-sha1 = "5bb5129fdd62a2bbbe17c2756932259acf467386"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 version = "0.7.50"
 
+[[deps.Polyester]]
+deps = ["ArrayInterface", "BitTwiddlingConvenienceFunctions", "CPUSummary", "IfElse", "ManualMemory", "PolyesterWeave", "Requires", "Static", "StaticArrayInterface", "StrideArraysCore", "ThreadingUtilities"]
+git-tree-sha1 = "8df43bbe60029526dd628af7e9951f5af680d4d7"
+uuid = "f517fe37-dbe3-4b94-8317-1923a5111588"
+version = "0.7.10"
+
+[[deps.PolyesterWeave]]
+deps = ["BitTwiddlingConvenienceFunctions", "CPUSummary", "IfElse", "Static", "ThreadingUtilities"]
+git-tree-sha1 = "240d7170f5ffdb285f9427b92333c3463bf65bf6"
+uuid = "1d0040c9-8b98-4ee7-8388-3f51789ca0ad"
+version = "0.2.1"
+
 [[deps.PooledArrays]]
 deps = ["DataAPI", "Future"]
 git-tree-sha1 = "a6062fe4063cdafe78f4a0a81cfffb89721b30e7"
 uuid = "2dfb63ee-cc39-5dd5-95bd-886bf059d720"
 version = "1.4.2"
+
+[[deps.PrecompileTools]]
+deps = ["Preferences"]
+git-tree-sha1 = "5aa36f7049a63a1528fe8f7c3f2113413ffd4e1f"
+uuid = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+version = "1.2.1"
 
 [[deps.Preferences]]
 deps = ["TOML"]
@@ -1473,9 +1720,26 @@ git-tree-sha1 = "6ed52fdd3382cf21947b15e8870ac0ddbff736da"
 uuid = "f50d1b31-88e8-58de-be2c-1cc44531875f"
 version = "0.4.0+0"
 
+[[deps.RollingFunctions]]
+deps = ["AccurateArithmetic", "FastBroadcast", "KahanSummation", "LinearAlgebra", "LoopVectorization", "Statistics", "StatsBase", "Tables"]
+git-tree-sha1 = "4a54152985fea23b0b0e99a77566a87137221a0a"
+uuid = "b0e4dd01-7b14-53d8-9b45-175a3e362653"
+version = "0.8.0"
+
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
+
+[[deps.SIMDTypes]]
+git-tree-sha1 = "330289636fb8107c5f32088d2741e9fd7a061a5c"
+uuid = "94e857df-77ce-4151-89e5-788b33177be4"
+version = "0.1.0"
+
+[[deps.SLEEFPirates]]
+deps = ["IfElse", "Static", "VectorizationBase"]
+git-tree-sha1 = "3aac6d68c5e57449f5b9b865c9ba50ac2970c4cf"
+uuid = "476501e8-09a2-5ece-8869-fb82de89a1fa"
+version = "0.6.42"
 
 [[deps.Scratch]]
 deps = ["Dates"]
@@ -1536,6 +1800,23 @@ weakdeps = ["ChainRulesCore"]
     [deps.SpecialFunctions.extensions]
     SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
 
+[[deps.Static]]
+deps = ["IfElse"]
+git-tree-sha1 = "b366eb1eb68075745777d80861c6706c33f588ae"
+uuid = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
+version = "0.8.9"
+
+[[deps.StaticArrayInterface]]
+deps = ["ArrayInterface", "Compat", "IfElse", "LinearAlgebra", "PrecompileTools", "Requires", "SparseArrays", "Static", "SuiteSparse"]
+git-tree-sha1 = "5d66818a39bb04bf328e92bc933ec5b4ee88e436"
+uuid = "0d7ed370-da01-4f52-bd93-41d350b8b718"
+version = "1.5.0"
+weakdeps = ["OffsetArrays", "StaticArrays"]
+
+    [deps.StaticArrayInterface.extensions]
+    StaticArrayInterfaceOffsetArraysExt = "OffsetArrays"
+    StaticArrayInterfaceStaticArraysExt = "StaticArrays"
+
 [[deps.StaticArrays]]
 deps = ["LinearAlgebra", "Random", "StaticArraysCore", "Statistics"]
 git-tree-sha1 = "6aa098ef1012364f2ede6b17bf358c7f1fbe90d4"
@@ -1583,6 +1864,12 @@ deps = ["AbstractFFTs", "Clustering", "DataStructures", "DataValues", "Distribut
 git-tree-sha1 = "e0d5bc26226ab1b7648278169858adcfbd861780"
 uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
 version = "0.15.4"
+
+[[deps.StrideArraysCore]]
+deps = ["ArrayInterface", "CloseOpenIntervals", "IfElse", "LayoutPointers", "ManualMemory", "SIMDTypes", "Static", "StaticArrayInterface", "ThreadingUtilities"]
+git-tree-sha1 = "d6415f66f3d89c615929af907fdc6a3e17af0d8c"
+uuid = "7792a7ef-975c-4747-a70f-980b88e8d1da"
+version = "0.5.2"
 
 [[deps.StringManipulation]]
 git-tree-sha1 = "46da2434b41f41ac3594ee9816ce5541c6096123"
@@ -1636,6 +1923,12 @@ version = "0.1.1"
 deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
+[[deps.ThreadingUtilities]]
+deps = ["ManualMemory"]
+git-tree-sha1 = "eda08f7e9818eb53661b3deb74e3159460dfbc27"
+uuid = "8290d209-cae3-49c0-8002-c8c24d57dab5"
+version = "0.5.2"
+
 [[deps.TranscodingStreams]]
 deps = ["Random", "Test"]
 git-tree-sha1 = "94f38103c984f89cf77c402f2a68dbd870f8165f"
@@ -1656,6 +1949,11 @@ version = "1.4.2"
 deps = ["Random", "SHA"]
 uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
+[[deps.UnPack]]
+git-tree-sha1 = "387c1f73762231e86e0c9c5443ce3b4a0a9a0c2b"
+uuid = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
+version = "1.0.2"
+
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
@@ -1675,6 +1973,12 @@ version = "1.12.4"
 git-tree-sha1 = "ca0969166a028236229f63514992fc073799bb78"
 uuid = "41fe7b60-77ed-43a1-b4f0-825fd5a5650d"
 version = "0.2.0"
+
+[[deps.VectorizationBase]]
+deps = ["ArrayInterface", "CPUSummary", "HostCPUFeatures", "IfElse", "LayoutPointers", "Libdl", "LinearAlgebra", "SIMDTypes", "Static", "StaticArrayInterface"]
+git-tree-sha1 = "7209df901e6ed7489fe9b7aa3e46fb788e15db85"
+uuid = "3d5dd08c-fd9d-11e8-17fa-ed2836048c2f"
+version = "0.21.65"
 
 [[deps.Wayland_jll]]
 deps = ["Artifacts", "EpollShim_jll", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
@@ -1904,7 +2208,7 @@ version = "1.3.7+1"
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
-version = "1.48.0+0"
+version = "1.52.0+1"
 
 [[deps.p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -1948,16 +2252,16 @@ version = "1.4.1+0"
 # ╟─285d9346-305b-4345-9f46-402240e7e06b
 # ╟─a17830f1-6c78-46c4-81d5-b26867b1ad31
 # ╟─d63a6833-c113-4511-be9c-6b01514b1f57
-# ╠═6f0539b1-a46c-4df7-a8e2-9982bd929288
-# ╠═e18ca91f-0d7c-4799-bd44-bcf768cb3ddd
+# ╟─6f0539b1-a46c-4df7-a8e2-9982bd929288
+# ╟─e18ca91f-0d7c-4799-bd44-bcf768cb3ddd
 # ╠═92f0a942-e5fa-4bdf-aa65-b6e07b1a63b7
 # ╠═a8959b07-e857-4144-99b2-431a68faf22b
 # ╠═9caf6df9-bac8-4ab6-ad8d-a7d578a107aa
 # ╠═91a2d5c9-aad9-433f-9cea-6b89f007379d
 # ╠═490b91ba-4d2f-4c7f-abd5-7ea64b834178
-# ╠═bab15754-71d0-4f2b-b1e5-eb34e6519aed
 # ╠═40ab265a-8584-462f-9095-a58cbd6bc2a8
 # ╠═ab778fd6-2057-4426-9b71-00974270ba02
+# ╠═bab15754-71d0-4f2b-b1e5-eb34e6519aed
 # ╟─c702b936-d809-4235-9d11-29e619d31d37
 # ╟─b4ed3094-ba79-4e3e-ab69-96fa6462d07c
 # ╟─c2691c78-c918-432a-a28c-2c7d840558ed
@@ -1969,7 +2273,13 @@ version = "1.4.1+0"
 # ╟─92c0b43e-e2c8-4009-a5bb-973eba87427f
 # ╟─b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
 # ╠═4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
-# ╠═602199e4-9c56-431c-aa84-d629a099c702
-# ╠═6ea12533-685c-4e3b-9da6-5319424f38b5
+# ╟─602199e4-9c56-431c-aa84-d629a099c702
+# ╟─9777f399-0ee3-40c3-b023-65cf04b71734
+# ╟─44ed1931-2f74-4dfe-808d-3a5941dde05e
+# ╟─0e18a6ec-a252-4fbf-ba0b-40d92ff3767f
+# ╠═eaf0530e-8250-438a-93cb-d5413384d243
+# ╠═82f94f15-00c0-494b-a6fd-66b1b31f7862
+# ╟─8043725d-dddf-48d3-9ee8-e4dc36a9f79f
+# ╟─a95db3bc-2999-45f7-84b1-6c33ef4d2366
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
