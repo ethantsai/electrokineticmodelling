@@ -388,7 +388,7 @@ TF2(10u"kHz")
 # ╔═╡ bab15754-71d0-4f2b-b1e5-eb34e6519aed
 begin
 	temp_x = logrange(0.1,1000,100)*1u"MHz"
-	plot(temp_x, [TF.(temp_x) TF2.(temp_x)], xscale=:log10, yscale=:log10, legend=false, xlim=(0.3, 50))
+	plot(temp_x, [TF.(temp_x) TF2.(temp_x)], xscale=:log10, yscale=:log10, legend=false, xlim=(0.3, 50), size = (1000,600))
 end
 
 # ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
@@ -497,7 +497,7 @@ julia> system_noise_error_plot(
 """
 function system_noise_error_plot(f_list, range, label_list, color_list)
 	theme(plot_theme)
-	p = plot(errorstyle=:ribbon, legend=:outerbottom, title="System Noise Contributors", xlabel="Frequency [MHz]", ylabel = "Voltage Noise [V/sqrt(Hz)]", xscale=:log10, yscale=:log10, xminorticks=10, yminorticks=10, dpi=500, size = (1200, 900), left_margin = 20px, titlefontsize=24, xlabelfontsize=18, ylabelfontsize=18, xtickfontsize=12, ytickfontsize=12, legendfontsize=12)
+	p = plot(errorstyle=:ribbon, legend=:outerbottom, title="System Noise Contributors", xlabel="Frequency [MHz]", ylabel = "Voltage Noise [V/sqrt(Hz)]", xscale=:log10, yscale=:log10, xminorticks=10, yminorticks=10, dpi=500, size = (1000,900), left_margin = 20px, titlefontsize=24, xlabelfontsize=18, ylabelfontsize=18, xtickfontsize=12, ytickfontsize=12, legendfontsize=12)
 	for i in eachindex(f_list)
 		y = ustrip.(Measurements.value.(f_list[i].(range)))
 		dy = ustrip.(Measurements.uncertainty.(f_list[i].(range)))
@@ -535,7 +535,7 @@ system_noise_error_plot(
 begin
 	frequency_range = [x*1u"MHz" for x in logrange(0.01,1000,100)]
 	plot(frequency_range, TF.(frequency_range), 
-		xrange = (0.01, 1000), yminorticks=10, xminorticks=10, xscale=:log10, yscale=:log10, title = "Transfer Function")
+		xrange = (0.01, 1000), yminorticks=10, xminorticks=10, xscale=:log10, yscale=:log10, title = "Transfer Function", size = (1000,600))
 end
 
 # ╔═╡ 9777f399-0ee3-40c3-b023-65cf04b71734
@@ -2235,7 +2235,7 @@ version = "1.4.1+0"
 """
 
 # ╔═╡ Cell order:
-# ╟─44bd8931-450e-4019-8dd0-30a5b25d6078
+# ╠═44bd8931-450e-4019-8dd0-30a5b25d6078
 # ╟─e6c4f7f0-e159-4231-9801-76a0ec643673
 # ╟─4392a6f5-e8dd-4fe6-b765-d21e14c32461
 # ╟─3660811b-8146-4111-819d-794cec160072
@@ -2271,15 +2271,15 @@ version = "1.4.1+0"
 # ╟─8676533e-169d-4395-867b-297d3fd2768f
 # ╟─4c5d1444-811b-4ca2-b97b-154787335cdc
 # ╟─92c0b43e-e2c8-4009-a5bb-973eba87427f
-# ╟─b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
+# ╠═b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
 # ╠═4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
-# ╟─602199e4-9c56-431c-aa84-d629a099c702
+# ╠═602199e4-9c56-431c-aa84-d629a099c702
 # ╟─9777f399-0ee3-40c3-b023-65cf04b71734
 # ╟─44ed1931-2f74-4dfe-808d-3a5941dde05e
 # ╟─0e18a6ec-a252-4fbf-ba0b-40d92ff3767f
 # ╠═eaf0530e-8250-438a-93cb-d5413384d243
 # ╠═82f94f15-00c0-494b-a6fd-66b1b31f7862
-# ╟─8043725d-dddf-48d3-9ee8-e4dc36a9f79f
+# ╠═8043725d-dddf-48d3-9ee8-e4dc36a9f79f
 # ╟─a95db3bc-2999-45f7-84b1-6c33ef4d2366
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
