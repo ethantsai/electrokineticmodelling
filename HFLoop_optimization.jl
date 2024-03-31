@@ -100,18 +100,18 @@ md"""
 Temperature (T): $(@bind T_unitless NumberField(0:1000, default=300)) K
 
 #### Loop Properties
-Loop Surface: $(@bind S_unitless NumberField(0.01:0.01:1000, default=210)) mm^2
+Loop Surface: $(@bind S_unitless NumberField(0.01:0.01:50000, default=11000)) mm^2
 
-Loop Radius: $(@bind r_loop_unitless NumberField(0.01:0.01:1000, default=97)) mm
+Loop Radius: $(@bind r_loop_unitless NumberField(0.01:0.01:1000, default=106)) mm
 
-Loop Thickness: $(@bind t_loop_unitless NumberField(0.01:0.01:40, default=4)) mm
+Loop Thickness: $(@bind t_loop_unitless NumberField(0.01:0.01:40, default=1)) mm
 
-Loop Resistance: $(@bind r_b_unitless NumberField(0.01:0.01:10, default=5)) Ω
+Loop Resistance: $(@bind r_b_unitless NumberField(0.01:0.01:10, default=2)) Ω
 
-Loop Self Inductance: $(@bind L_0_unitless NumberField(0.01:0.01:10000, default=5)) nH
+Loop Self Inductance: $(@bind L_0_unitless NumberField(0.01:0.01:10000, default=400)) nH
 
 #### Toroid Properties
-Toroid type: $(@bind toroid_type Select(["TN10/6/4-4A11", "TN13/7.5/5-4A11"]))
+Toroid type: $(@bind toroid_type Select(["TN10/6/4-4A11", "TN13/7.5/5-4A11", "TX10/6/4-4C65"]))
 
 Number of toroids: $(@bind num_toroids Slider(1:8, default=4, show_value=true)) toroids
 
@@ -130,11 +130,11 @@ JFET Input Voltage Noise (e\_ba): $(@bind e_ba_unitless NumberField(0:10; defaul
 JFET Input Current Noise (i\_ba): $(@bind i_ba_unitless NumberField(0:10; default=1)) pA/sqrt(Hz)
 
 #### Biasing Circuit Properties
-Biasing Circuit Input Resistance (R\_in): $(@bind R_in_unitless NumberField(0:0.01:10; default=1.5)) kΩ
+Biasing Circuit Input Resistance (R\_in): $(@bind R_in_unitless NumberField(0:0.01:10; default=100)) kΩ
 
 
 #### Feedback Properties
-Feedback Resisitance (R\_cr): $(@bind R_cr_unitless NumberField(.1:.001:10; default=3.01)) kΩ
+Feedback Resisitance (R\_cr): $(@bind R_cr_unitless NumberField(.1:.001:10; default=1.2)) kΩ
 
 #### Define turns for model
 Number of Turns: $(@bind N_turns NumberField(1:1000; default=50)) turns
@@ -161,10 +161,12 @@ begin
 	# const A_l = 348e-9 ± 0.25*348e-9 # nH, from 4A11 in 
 	toroid_list = Dict([
 		("TN13/7.5/5-4A11", [13u"mm" ± 0.35u"mm", 6.8u"mm" ± 0.35u"mm", 5.4u"mm" ± 0.35u"mm", 0.1u"mm", 358u"nH" ± 0.25*358u"nH", 700u"H/m" ± 0.2*700u"H/m"]),
-		("TN10/6/4-4A11", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 0.1u"mm", 348u"nH" ± 0.25*348u"nH", 700u"H/m" ± 0.2*700u"H/m"])
+		("TN10/6/4-4A11", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 0.1u"mm", 348u"nH" ± 0.25*348u"nH", 700u"H/m" ± 0.2*700u"H/m"]),
+		("TX10/6/4-4C65", [10.6u"mm" ± 0.3u"mm", 5.2u"mm" ± 0.3u"mm", 4.4u"mm" ± 0.3u"mm", 0.1u"mm", 52u"nH" ± 0.25*52u"nH", 125u"H/m" ± 0.2*125u"H/m"])
 	]);
 	# https://www.farnell.com/datasheets/650988.pdf
 	# https://www.distrelec.biz/Web/Downloads/_t/ds/tn10_eng_tds.pdf
+	# https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/2598/TX10-6-4-4C65%20.pdf
 	@info "Imported toroid properties."
 
 	wire_list = Dict([ # in format material => electrical resistivity, wire mass density, insulation mass density, ε_r (permittivity of insulator)
@@ -262,9 +264,17 @@ begin
 	ρ = wire_ρr / S_w |> u"Ω/m" # Ω/m, wire resistivity
 	r_s = (L_tw * ρ) |> u"Ω" # total resistance from windings (Ω = kg m^2/s^3 A^2)
 	@info "Total winding resisitance: $r_s"
+	L = A_l * N_turns^2 |> u"mH"
+	@info "Toroid Inductance: $L"
 
-	N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_jfets))
-	@info "Resonant frequency will be centered at $N_res."
+	flux_tor = pi*(OD_tor-ID_tor)^2*pi*(OD_tor+ID_tor) * μ_i / (2 * pi * (OD_tor+ID_tor)/2) |> u"nT*m^3/A"
+	@info "flux/I in toroid: $flux_tor" 
+
+	F_res = get_resonant_frequency(A_l, N_turns, C_jfet/num_jfets)
+	@info "Resonant frequency will be centered at $F_res."
+	
+	# N_res = upreferred(turns_from_freq(100u"kHz", 10u"MHz", num_toroids, A_l, C_jfet, num_jfets))
+	# @info "Resonant frequency will be centered at $N_res."
 	
 	e_bt = sqrt(4*k*T*r_s) |> u"nV/sqrt(Hz)" # wound toroid johnson nyquist noise in units of nV/sqrt(Hz)
 	@info "Johnson-nyquist noise of wound toroid e_bt: $e_bt"
@@ -319,7 +329,7 @@ with $r_s$ and $R_{in}$ being the winding resisitance and amplifier input resisi
 
 The amplifier transfer function $H_a$ is...
 
-And finally, $Y_{cr}$ is just inverse of feedback resistance $1/R_{cr}$, which is about 1.2kΩ.
+And finally, $Y_{cr}$ is just inverse of feedback resistance $1/R_{cr}$, which is on the order of a couple kΩ.
 
 In the frequency range of interest $F_0 \sim 10e6$, $HY_{cr}>>1$, so we can simplify:
 
@@ -364,9 +374,9 @@ H_a = dBV2gain(40)
 
 # ╔═╡ 9caf6df9-bac8-4ab6-ad8d-a7d578a107aa
 H(ω) = find_real(
-	-A_l * N_turns * H_a * ω,
-	1 + (r_s/R_in) - (A_l * N_turns^2 * C_in * ω^2),
-	((A_l*N_turns^2/R_in) + (r_s*C_in))*ω
+	-num_toroids * A_l * N_turns * H_a * ω, # this makes sense, it's the inductance / N 
+	1 + (r_s/R_in) - (num_toroids * A_l * N_turns^2 * C_in * ω^2),
+	((num_toroids * A_l*N_turns^2/R_in) + (r_s*C_in))*ω
 ) |> u"kΩ"
 
 # ╔═╡ 91a2d5c9-aad9-433f-9cea-6b89f007379d
@@ -388,8 +398,14 @@ TF2(10u"kHz")
 # ╔═╡ bab15754-71d0-4f2b-b1e5-eb34e6519aed
 begin
 	temp_x = logrange(0.1,1000,100)*1u"MHz"
-	plot(temp_x, [TF.(temp_x) TF2.(temp_x)], xscale=:log10, yscale=:log10, legend=false, xlim=(0.3, 50), size = (1000,600))
+	plot(temp_x, TF.(temp_x), xscale=:log10, yscale=:log10, legend=false, xlim=(0.3, 100), ylim=(0.001,0.1), size = (1000,600), minorticks=true, left_margin = 6mm)
+	p1 = plot!(title="Simulated Transfer Function")
+	p1 = plot!(p1, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16)
+	# savefig(p1, "Simulated Transfer Function.png")
 end
+
+# ╔═╡ d86f77a0-6d4b-4bac-a383-3fca16e0fc23
+	plot(temp_x, H.(temp_x), xscale =:log10, legend=false, xlim=(0.3, 100), size = (1000,600), minorticks=true)
 
 # ╔═╡ c702b936-d809-4235-9d11-29e619d31d37
 md"
@@ -512,30 +528,34 @@ function system_noise_error_plot(f_list, range, label_list, color_list)
 end
 
 # ╔═╡ 4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
-system_noise_error_plot(
-	[v_b1, v_b2, v_b3, v_b4, v_b],
-	[x*1u"MHz" for x in logrange(0.1,10,1000)],
-	[
-		"v_b1, noise from toroids",
-		"v_b2, noise from biasing circuit",
-		"v_b3, noise from amplifier current",
-		"v_b4, noise from amplifier voltage",
-		"v_b, total noise"
-	],
-	[
-		:blue,
-		:orange,
-		:green,
-		:purple,
-		:red
-	]
-)
+begin
+	p2 = system_noise_error_plot(
+		[v_b1, v_b2, v_b3, v_b4, v_b],
+		[x*1u"MHz" for x in logrange(0.1,10,1000)],
+		[
+			"v_b1, noise from toroids",
+			"v_b2, noise from biasing circuit",
+			"v_b3, noise from amplifier current",
+			"v_b4, noise from amplifier voltage",
+			"v_b, total noise"
+		],
+		[
+			:blue,
+			:orange,
+			:green,
+			:purple,
+			:red
+		]
+	)
+	
+	# savefig(p2, "noise_plot.png")
+end
 
 # ╔═╡ 602199e4-9c56-431c-aa84-d629a099c702
 begin
-	frequency_range = [x*1u"MHz" for x in logrange(0.01,1000,100)]
+	frequency_range = [x*1u"MHz" for x in logrange(0.05,20,100)]
 	plot(frequency_range, TF.(frequency_range), 
-		xrange = (0.01, 1000), yminorticks=10, xminorticks=10, xscale=:log10, yscale=:log10, title = "Transfer Function", size = (1000,600))
+		xrange = (0.01, 1000), yminorticks=10, xminorticks=10, xscale=:log10, yscale=:log10, title = "Transfer Function", size = (1000,600), minorticks=true)
 end
 
 # ╔═╡ 9777f399-0ee3-40c3-b023-65cf04b71734
@@ -551,6 +571,20 @@ Noise CSV Name 1: $(@bind noise_csv_name_1 Select(readdir("data/")[findall(x->x[
 Gain CSV Name 2: $(@bind gain_csv_name_2 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM8 EElab Gain shield can.csv"))
 
 Noise CSV Name 2: $(@bind noise_csv_name_2 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM8 EElab noise shield can.csv"))
+
+CNRS Gain CSV Name 1: $(@bind cnrs_gain_csv_name_1 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM7_CNRS_TF_gain.csv"))
+
+CNRS Driver Gain CSV Name 1: $(@bind cnrs_gain_driver_csv_name_1 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM7_CNRS_driver_TF_gain.csv"))
+
+CNRS Noise CSV Name 1: $(@bind cnrs_noise_csv_name_1 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "test_csv_noise.csv"))
+
+CNRS Gain CSV Name 2: $(@bind cnrs_gain_csv_name_2 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM8_CNRS_TF_gain.csv"))
+
+CNRS Driver Gain CSV Name 2: $(@bind cnrs_gain_driver_csv_name_2 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "TM8_CNRS_driver_TF_gain.csv"))
+
+CNRS Noise CSV Name 2: $(@bind cnrs_noise_csv_name_2 Select(readdir("data/")[findall(x->x[(end-3):end] == ".csv", readdir("data/"))], default = "test_csv_noise.csv"))
+
+
 
 System Impedance: $(@bind impedance_Ohm_unitless NumberField(0.01:0.01:1000, default=50)) Ω
 
@@ -589,6 +623,7 @@ begin
 	R_shunt = R_shunt_unitless * 1u"Ω"; #Ω
 	z_distance = z_distance_unitless  * 1u"mm"; #mm
 	V2nT = R_shunt * 2 * (z_distance^2+r_loop^2)^(3/2) / ((4*pi*10^-7)*1u"N/A^2" * r_loop^2 ) |> u"V/nT"
+	cnrs_driver_gain = 216u"nT/V"; #nT/V
 	
 	function dBm_to_Vpp(dBm)
 	    # Convert dBm to Watts
@@ -600,6 +635,12 @@ begin
 	    return Vpp |> u"V"
 	end
 
+	function dB_to_V_ratio(dB)
+	    # Convert dB to voltage ratio
+	    V_ratio = 10 ^ (dB / 20)
+	    return V_ratio
+	end
+	
 	df0 = CSV.read("data/$loop_current_csv_name", DataFrame);
 	
 	df1_gain = CSV.read("data/$gain_csv_name_1", DataFrame);
@@ -608,22 +649,67 @@ begin
 	df2_gain = CSV.read("data/$gain_csv_name_2", DataFrame);
 	df2_noise = CSV.read("data/$noise_csv_name_2", DataFrame);
 
+	cnrs_df1_gain = CSV.read("data/$cnrs_gain_csv_name_1", DataFrame);
+	cnrs_df1_noise = CSV.read("data/$cnrs_noise_csv_name_1", DataFrame);
+	
+	cnrs_df2_gain = CSV.read("data/$cnrs_gain_csv_name_2", DataFrame);
+	cnrs_df2_noise = CSV.read("data/$cnrs_noise_csv_name_2", DataFrame);
+
+	cnrs_df1_gain_driver = CSV.read("data/$cnrs_gain_driver_csv_name_1", DataFrame);
+	cnrs_df2_gain_driver = CSV.read("data/$cnrs_gain_driver_csv_name_2", DataFrame);
+
+	
 	f = df0[:,1] .* 1e-6u"MHz";
 	in_Vpp = dBm_to_Vpp.(df0[:,2]);
 	out_Vpp_1 = dBm_to_Vpp.(df1_gain[:,2]);
 	noise_Vpp_1 = dBm_to_Vpp.(df1_noise[:,2]);
 	out_Vpp_2 = dBm_to_Vpp.(df2_gain[:,2]);
 	noise_Vpp_2 = dBm_to_Vpp.(df2_noise[:,2]);
+	cnrs_f = cnrs_df1_gain[:,1] .* 1e-6u"MHz";
+	cnrs_gain_1 = dB_to_V_ratio.(cnrs_df1_gain[:,2]);
+	cnrs_gain_2 = dB_to_V_ratio.(cnrs_df2_gain[:,2]);
+	cnrs_gain_driver_1 = dB_to_V_ratio.(cnrs_df1_gain_driver[:,2]);
+	cnrs_gain_driver_2 = dB_to_V_ratio.(cnrs_df2_gain_driver[:,2]);
 
 	T1 = out_Vpp_1 .* V2nT ./ in_Vpp;
 	T2 = out_Vpp_2 .* V2nT ./ in_Vpp;	
+	CNRS_T1 = cnrs_gain_1 .* V2nT;
+	CNRS_T2 = cnrs_gain_2 .* V2nT;
+	CNRS_driver_T1 = cnrs_gain_driver_1 ./ cnrs_driver_gain;
+	CNRS_driver_T2 = cnrs_gain_driver_2 ./ cnrs_driver_gain;
 
-	NEMI1 = noise_Vpp_1 .* 1u"Hz^(-1/2)"./ T1
-	NEMI2 = noise_Vpp_2 .* 1u"Hz^(-1/2)" ./ T2
-
+	NEMI1 = @. noise_Vpp_1 / T1 / sqrt(f) |> u"nT/sqrt(Hz)"
+	NEMI2 = @. noise_Vpp_2 / T2 / sqrt(f) |> u"nT/sqrt(Hz)"
+	
 	NEMI1_avg = rollmean(NEMI1, moving_avg)
 	NEMI2_avg = rollmean(NEMI2, moving_avg)
+
+	T1_avg = rollmean(T1, moving_avg)
+	T2_avg = rollmean(T2, moving_avg)
+	CNRS_T1_avg = rollmean(CNRS_T1, moving_avg)
+	CNRS_T2_avg = rollmean(CNRS_T2, moving_avg)
+	CNRS_driver_T1_avg = rollmean(CNRS_driver_T1, moving_avg)
+	CNRS_driver_T2_avg = rollmean(CNRS_driver_T2, moving_avg)
+	
 end
+
+# ╔═╡ 424eb2fd-5fa7-46f2-85e7-75db773eed1d
+# ╠═╡ disabled = true
+#=╠═╡
+begin
+	scatter([f, cnrs_f, cnrs_f], ustrip.([T2, CNRS_T2, CNRS_driver_T2]),
+		label=false,xscale=:log10, yscale=:log10, xlim=(.01,100), ylim = (.01,1),
+		minorticks=true,  markersize=1, markerstrokewidth=0, color = [et_orange et_blue et_green])
+	
+	p6 = plot!([f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2, cnrs_f[(moving_avg÷2):end-moving_avg÷2]], cnrs_f[(moving_avg÷2):end-moving_avg÷2, cnrs_f[(moving_avg÷2):end-moving_avg÷2]]],
+		[T2_avg, CNRS_T2_avg, CNRS_driver_T2_avg],
+		label = ["UCLA_"*noise_csv_name_2[1:3] "CNRS_"*cnrs_gain_csv_name_2[1:3]],
+		title="CNRS Transfer Function Plots", color = [et_orange et_blue])
+	
+	p6 = plot!(p6, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = 6mm, bottom_margin = 6mm, size = (1000,600))
+	# savefig(p5, "ucla_cnrs_freq_response_tm8.png")
+end
+  ╠═╡ =#
 
 # ╔═╡ 8043725d-dddf-48d3-9ee8-e4dc36a9f79f
 html"""<style>
@@ -631,6 +717,22 @@ main {
     max-width: 1200px;
 }
 """
+
+# ╔═╡ ba4ac1cc-0e7a-44bf-86a6-003532275ac4
+begin
+	struct TwoColumn{L, R}
+	    left::L
+	    right::R
+	end
+	
+	function Base.show(io, mime::MIME"text/html", tc::TwoColumn)
+	    write(io, """<div style="display: flex;"><div style="flex: 50%;">""")
+	    show(io, mime, tc.left)
+	    write(io, """</div><div style="flex: 50%;">""")
+	    show(io, mime, tc.right)
+	    write(io, """</div></div>""")
+	end
+end
 
 # ╔═╡ a95db3bc-2999-45f7-84b1-6c33ef4d2366
 begin
@@ -659,14 +761,53 @@ end
 
 # ╔═╡ eaf0530e-8250-438a-93cb-d5413384d243
 begin
-	scatter(f, ustrip.([T1, T2]), xscale=:log10, yscale=:log10, xlim=(.3,50), ylim = (.01,1), minorticks=true,  markersize=1, markerstrokewidth=0, label = [gain_csv_name_1[1:3] gain_csv_name_2[1:3]], color = [et_orange et_blue],size = (1000,600))
+	scatter(f, ustrip.([T1, T2]), xscale=:log10, yscale=:log10, xlim=(.3,50), ylim = (.001,1), minorticks=true,  markersize=1, markerstrokewidth=0, label = [gain_csv_name_1[1:3] gain_csv_name_2[1:3]], color = [et_orange et_blue],size = (1000,600))
+	p4 = plot!(title="TM7 (50 turns) and TM8 (40 turns) Transfer Function")
+	p4 = plot!(p4, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = 6mm, bottom_margin = 6mm)
+	# savefig(p4, "measured_transfer_function_tm7tm8.png")
 end
 
 # ╔═╡ 82f94f15-00c0-494b-a6fd-66b1b31f7862
 begin
-	scatter(f, [NEMI1, NEMI2], color = [et_orange et_blue], xscale=:log10, yscale=:log10, minorticks=true,  markersize=1, markeralpha=.5, markerstrokewidth=0, label=false)
-	plot!(f[(moving_avg÷2):end-moving_avg÷2], [NEMI1_avg, NEMI2_avg], label = [noise_csv_name_1[1:3] noise_csv_name_2[1:3]], color = [et_orange et_blue], size = (1000,600))
+	scatter(f, [NEMI1, NEMI2], color = [et_orange et_blue], xscale=:log10, yscale=:log10, minorticks=true,  markersize=1, markeralpha=.7, markerstrokewidth=0, label=false, legend=:topleft, ylim=(1e-8,1e-4))
+	plot!(f[(moving_avg÷2):end-moving_avg÷2], [NEMI1_avg, NEMI2_avg], label = [noise_csv_name_1[1:3] noise_csv_name_2[1:3]], color = [et_orange et_blue], xlim = (0.3,50), size = (1000,600))
+	p3 = plot!(title="TM7 (50 turns) and TM8 (40 turns) Noise Floor")
+	p3 = plot!(p3, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = 6mm, bottom_margin = 6mm)
+	# savefig(p3, "measured_noise_floor_tm7tm8.png")
 end
+
+# ╔═╡ ffd7b8db-d8d8-41a1-abd6-4a04be7016c1
+begin
+	scatter([f, cnrs_f, cnrs_f], ustrip.([T1, CNRS_T1, CNRS_driver_T1]),
+		label=false,xscale=:log10, yscale=:log10, xlim=(.01,100), ylim = (.01,1),
+		minorticks=true,  markersize=1, markerstrokewidth=0, color = [et_orange et_blue et_green])
+	
+	p5 = plot!([f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2]],
+		ustrip.([T1_avg, CNRS_T1_avg, CNRS_driver_T1_avg]),
+		label = ["UCLA_"*noise_csv_name_1[1:3] "CNRS_"*cnrs_gain_csv_name_1[1:3] "CNRS_driver_"*cnrs_gain_driver_csv_name_1[1:3]],
+		title="CNRS Transfer Function Plots", color = [et_orange et_blue et_green])
+	
+	p5 = plot!(p5, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = 6mm, bottom_margin = 6mm, size = (1000,600))
+	# savefig(p5, "ucla_cnrs_freq_response_tm7.png")
+end
+
+# ╔═╡ 5257047a-054a-4944-a3bb-417470cd30e2
+begin
+	scatter([f, cnrs_f, cnrs_f], ustrip.([T2, CNRS_T2, CNRS_driver_T2]),
+		label=false,xscale=:log10, yscale=:log10, xlim=(.01,100), ylim = (.01,1),
+		minorticks=true,  markersize=1, markerstrokewidth=0, color = [et_orange et_blue et_green])
+	
+	p6 = plot!([f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2]],
+		ustrip.([T2_avg, CNRS_T2_avg, CNRS_driver_T2_avg]),
+		label = ["UCLA_"*noise_csv_name_2[1:3] "CNRS_"*cnrs_gain_csv_name_2[1:3] "CNRS_driver_"*cnrs_gain_driver_csv_name_2[1:3]],
+		title="CNRS Transfer Function Plots", color = [et_orange et_blue et_green])
+	
+	p6 = plot!(p6, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = 6mm, bottom_margin = 6mm, size = (1000,600))
+	# savefig(p6, "ucla_cnrs_freq_response_tm8.png")
+end
+
+# ╔═╡ 07928111-006d-4fb1-a019-f3a4ec13f690
+
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2235,11 +2376,11 @@ version = "1.4.1+0"
 """
 
 # ╔═╡ Cell order:
-# ╠═44bd8931-450e-4019-8dd0-30a5b25d6078
+# ╟─44bd8931-450e-4019-8dd0-30a5b25d6078
 # ╟─e6c4f7f0-e159-4231-9801-76a0ec643673
 # ╟─4392a6f5-e8dd-4fe6-b765-d21e14c32461
 # ╟─3660811b-8146-4111-819d-794cec160072
-# ╟─06f26860-d843-497f-9ae5-25594ddaddef
+# ╠═06f26860-d843-497f-9ae5-25594ddaddef
 # ╟─a47c7173-317d-4394-8357-59743f5a0982
 # ╟─1322f57c-93ff-4c5d-9980-30fd01d5a4d3
 # ╟─f86e3141-2161-4dec-ab51-15612e30bc70
@@ -2249,8 +2390,8 @@ version = "1.4.1+0"
 # ╟─4bd00596-c1cb-4e36-81a2-687e1b19ec0e
 # ╟─9dbd2dfd-5899-4c1f-aca4-c53d4c6b7a61
 # ╟─43ef91de-2b99-451a-ad20-6c9e2e5908d0
-# ╟─285d9346-305b-4345-9f46-402240e7e06b
-# ╟─a17830f1-6c78-46c4-81d5-b26867b1ad31
+# ╠═285d9346-305b-4345-9f46-402240e7e06b
+# ╠═a17830f1-6c78-46c4-81d5-b26867b1ad31
 # ╟─d63a6833-c113-4511-be9c-6b01514b1f57
 # ╟─6f0539b1-a46c-4df7-a8e2-9982bd929288
 # ╟─e18ca91f-0d7c-4799-bd44-bcf768cb3ddd
@@ -2261,6 +2402,7 @@ version = "1.4.1+0"
 # ╠═490b91ba-4d2f-4c7f-abd5-7ea64b834178
 # ╠═40ab265a-8584-462f-9095-a58cbd6bc2a8
 # ╠═ab778fd6-2057-4426-9b71-00974270ba02
+# ╠═d86f77a0-6d4b-4bac-a383-3fca16e0fc23
 # ╠═bab15754-71d0-4f2b-b1e5-eb34e6519aed
 # ╟─c702b936-d809-4235-9d11-29e619d31d37
 # ╟─b4ed3094-ba79-4e3e-ab69-96fa6462d07c
@@ -2271,15 +2413,20 @@ version = "1.4.1+0"
 # ╟─8676533e-169d-4395-867b-297d3fd2768f
 # ╟─4c5d1444-811b-4ca2-b97b-154787335cdc
 # ╟─92c0b43e-e2c8-4009-a5bb-973eba87427f
-# ╠═b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
+# ╟─b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
 # ╠═4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
-# ╠═602199e4-9c56-431c-aa84-d629a099c702
+# ╟─602199e4-9c56-431c-aa84-d629a099c702
 # ╟─9777f399-0ee3-40c3-b023-65cf04b71734
 # ╟─44ed1931-2f74-4dfe-808d-3a5941dde05e
 # ╟─0e18a6ec-a252-4fbf-ba0b-40d92ff3767f
-# ╠═eaf0530e-8250-438a-93cb-d5413384d243
+# ╟─eaf0530e-8250-438a-93cb-d5413384d243
 # ╠═82f94f15-00c0-494b-a6fd-66b1b31f7862
-# ╠═8043725d-dddf-48d3-9ee8-e4dc36a9f79f
+# ╠═ffd7b8db-d8d8-41a1-abd6-4a04be7016c1
+# ╠═5257047a-054a-4944-a3bb-417470cd30e2
+# ╠═424eb2fd-5fa7-46f2-85e7-75db773eed1d
+# ╟─8043725d-dddf-48d3-9ee8-e4dc36a9f79f
+# ╟─ba4ac1cc-0e7a-44bf-86a6-003532275ac4
 # ╟─a95db3bc-2999-45f7-84b1-6c33ef4d2366
+# ╠═07928111-006d-4fb1-a019-f3a4ec13f690
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
