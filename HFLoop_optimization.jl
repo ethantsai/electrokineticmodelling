@@ -659,7 +659,7 @@ begin
 	cnrs_df2_gain_driver = CSV.read("data/$cnrs_gain_driver_csv_name_2", DataFrame);
 
 	
-	f = df0[:,1] .* 1e-6u"MHz";
+	f = df1_gain[:,1] .* 1e-6u"MHz";
 	in_Vpp = dBm_to_Vpp.(df0[:,2]);
 	out_Vpp_1 = dBm_to_Vpp.(df1_gain[:,2]);
 	noise_Vpp_1 = dBm_to_Vpp.(df1_noise[:,2]);
@@ -778,16 +778,16 @@ end
 
 # ╔═╡ ffd7b8db-d8d8-41a1-abd6-4a04be7016c1
 begin
-	scatter([f, cnrs_f, cnrs_f], ustrip.([T1, CNRS_T1, CNRS_driver_T1]),
-		label=false,xscale=:log10, yscale=:log10, xlim=(.01,100), ylim = (.01,1),
-		minorticks=true,  markersize=1, markerstrokewidth=0, color = [et_orange et_blue et_green])
+	scatter([f, cnrs_f], ustrip.([T1, CNRS_T1]),
+		label=false,xscale=:log10, yscale=:log10, xlim=(.01,100), ylim = (.001,1),
+		minorticks=true,  markersize=[1 0.5], markerstrokewidth=0, color = [et_orange et_blue])
 	
-	p5 = plot!([f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2]],
-		ustrip.([T1_avg, CNRS_T1_avg, CNRS_driver_T1_avg]),
-		label = ["UCLA_"*noise_csv_name_1[1:3] "CNRS_"*cnrs_gain_csv_name_1[1:3] "CNRS_driver_"*cnrs_gain_driver_csv_name_1[1:3]],
-		title="CNRS Transfer Function Plots", color = [et_orange et_blue et_green])
+	p5 = plot!([f[(moving_avg÷2):end-moving_avg÷2], cnrs_f[(moving_avg÷2):end-moving_avg÷2]],
+		ustrip.([T1_avg, CNRS_T1_avg]),
+		label = ["UCLA_"*noise_csv_name_1[1:3] "CNRS_"*cnrs_gain_csv_name_1[1:3]],
+		title="UCLA/CNRS Transfer Function Plots", color = [et_orange et_blue], ylabel="V/nT")
 	
-	p5 = plot!(p5, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = 6mm, bottom_margin = 6mm, size = (1000,600))
+	p5 = plot!(p5, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = -20mm, right_margin=20mm, bottom_margin = 6mm, size = (1100,600), legend=:right)
 	# savefig(p5, "ucla_cnrs_freq_response_tm7.png")
 end
 
@@ -805,6 +805,47 @@ begin
 	p6 = plot!(p6, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = 6mm, bottom_margin = 6mm, size = (1000,600))
 	# savefig(p6, "ucla_cnrs_freq_response_tm8.png")
 end
+
+# ╔═╡ cc0fe7f4-825c-4e63-91d8-77171b43f92c
+begin
+	tm7_cnrs_noise_csv_name = "202403_CNRS_noise_TM7.csv"
+	tm8_cnrs_noise_csv_name = "202403_CNRS_noise_TM8.csv"
+	lpc2e_cnrs_noise_csv_name = "202403_CNRS_noise_LPC2E.csv"
+	
+	tm7_cnrs_noise_df = CSV.read("data/$tm7_cnrs_noise_csv_name", DataFrame);
+	tm8_cnrs_noise_df = CSV.read("data/$tm8_cnrs_noise_csv_name", DataFrame);
+	lpc2e_cnrs_noise_df = CSV.read("data/$lpc2e_cnrs_noise_csv_name", DataFrame);
+
+	cnrs_noise_index = 7
+
+	cnrs_noise_f = tm7_cnrs_noise_df[:,1] .* 1e-6u"MHz";
+	cnrs_noise = tm7_cnrs_noise_df[:,cnrs_noise_index] .* 1u"V/sqrt(Hz)"
+	cnrs_noise_avg = rollmean(cnrs_noise, moving_avg)
+
+	lpc2e_noise = tm8_cnrs_noise_df[:,2] .* 1u"V/sqrt(Hz)"
+	lpc2e_noise_avg = rollmean(lpc2e_noise, moving_avg)
+	
+	thing = NEMI1./5
+	thing_avg = rollmean(thing, moving_avg)
+
+	cnrs_ucla_noise_compare = scatter([cnrs_noise_f, cnrs_noise_f], ustrip.([cnrs_noise, lpc2e_noise]),
+		label=false,xscale=:log10, yscale=:log10, xlim=(.01,100), ylim = (1e-8,1e-5), ylabel = "V/sqrt(Hz)",
+		minorticks=true,  markersize=[1 0.5 0.5], markerstrokewidth=0, color = [et_orange et_blue])
+
+	cnrs_ucla_noise_compare = plot!([cnrs_noise_f[(moving_avg÷2):end-moving_avg÷2],
+									 cnrs_noise_f[(moving_avg÷2):end-moving_avg÷2]],
+									ustrip.([cnrs_noise_avg, lpc2e_noise_avg]),
+									label = ["CNRS_TM7" "CNRS_CHARM"],
+									title="UCLA/CNRS Noise Floor Comparison (r_cr = 3.1k, gate cap)", color = [et_orange et_blue])
+	
+	cnrs_ucla_noise_compare = plot!(cnrs_ucla_noise_compare, xtickfontsize=12, ytickfontsize=12, xguidefontsize=16, yguidefontsize=16, legendfontsize=10, titlefontsize=16, left_margin = -20mm, right_margin=20mm, bottom_margin = 6mm, size = (1100,600), legend=:topright)
+	
+	# savefig(cnrs_ucla_noise_compare, "ucla_cnrs_noise_floor_comparison.png")
+	
+end
+
+# ╔═╡ de8f2990-6af3-4ea9-b138-182aa06c7e75
+cnrs_noise_f[(moving_avg÷2):end-moving_avg÷2]
 
 # ╔═╡ 07928111-006d-4fb1-a019-f3a4ec13f690
 
@@ -2416,13 +2457,15 @@ version = "1.4.1+0"
 # ╟─b2ebf5ab-f318-4f56-a14d-c91f9e1d1ff2
 # ╠═4aaa1f90-93a0-4788-a14b-49f7f4f7f3c5
 # ╟─602199e4-9c56-431c-aa84-d629a099c702
-# ╟─9777f399-0ee3-40c3-b023-65cf04b71734
+# ╠═9777f399-0ee3-40c3-b023-65cf04b71734
 # ╟─44ed1931-2f74-4dfe-808d-3a5941dde05e
 # ╟─0e18a6ec-a252-4fbf-ba0b-40d92ff3767f
-# ╟─eaf0530e-8250-438a-93cb-d5413384d243
+# ╠═eaf0530e-8250-438a-93cb-d5413384d243
 # ╠═82f94f15-00c0-494b-a6fd-66b1b31f7862
 # ╠═ffd7b8db-d8d8-41a1-abd6-4a04be7016c1
 # ╠═5257047a-054a-4944-a3bb-417470cd30e2
+# ╠═de8f2990-6af3-4ea9-b138-182aa06c7e75
+# ╠═cc0fe7f4-825c-4e63-91d8-77171b43f92c
 # ╠═424eb2fd-5fa7-46f2-85e7-75db773eed1d
 # ╟─8043725d-dddf-48d3-9ee8-e4dc36a9f79f
 # ╟─ba4ac1cc-0e7a-44bf-86a6-003532275ac4
